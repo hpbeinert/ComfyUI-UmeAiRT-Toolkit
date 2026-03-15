@@ -168,7 +168,7 @@ class UmeAiRT_Unpack_Settings:
         return (
             settings.get("width", 1024), settings.get("height", 1024),
             settings.get("steps", 20), settings.get("cfg", 8.0),
-            settings.get("sampler", "euler"), settings.get("scheduler", "normal"),
+            settings.get("sampler_name", "euler"), settings.get("scheduler", "normal"),
             settings.get("seed", 0)
         )
 
@@ -181,7 +181,7 @@ class UmeAiRT_Unpack_FilesBundle:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "files_bundle": ("UME_FILES", {"tooltip": "Input UME_FILES bundle to unpack."}),
+                "files_bundle": ("UME_BUNDLE", {"tooltip": "Input UME_BUNDLE to unpack."}),
             }
         }
     
@@ -203,7 +203,7 @@ class UmeAiRT_Unpack_FilesBundle:
             ValueError: If the input is not a recognized dictionary mapping.
         """
         if not isinstance(files_bundle, dict):
-            raise ValueError("UmeAiRT Unpack: Input is not a valid UME_FILES bundle.")
+            raise ValueError("UmeAiRT Unpack: Input is not a valid UME_BUNDLE.")
         return (
             files_bundle.get("model"),
             files_bundle.get("clip"),
@@ -211,8 +211,46 @@ class UmeAiRT_Unpack_FilesBundle:
             files_bundle.get("model_name", "")
         )
 
+
+class UmeAiRT_Pack_Bundle:
+    """Packs native ComfyUI types (MODEL, CLIP, VAE) into a UME_BUNDLE.
+
+    Use this to feed models from any native or community loader into the Block pipeline.
+    """
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model": ("MODEL", {"tooltip": "The diffusion model."}),
+                "clip": ("CLIP", {"tooltip": "The CLIP text encoder."}),
+                "vae": ("VAE", {"tooltip": "The VAE model."}),
+            },
+            "optional": {
+                "model_name": ("STRING", {"default": "", "tooltip": "Optional model name for metadata."}),
+            }
+        }
+
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
+    FUNCTION = "pack"
+    CATEGORY = "UmeAiRT/Pack"
+
+    def pack(self, model, clip, vae, model_name=""):
+        """Packs native ComfyUI models into a UME_BUNDLE dict.
+
+        Args:
+            model: The diffusion model.
+            clip: The CLIP text encoder.
+            vae: The VAE model.
+            model_name (str, optional): A label for metadata. Defaults to "".
+
+        Returns:
+            tuple: A tuple containing the UME_BUNDLE dict.
+        """
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": model_name},)
+
 class UmeAiRT_Unpack_ImageBundle:
-    """Deconstructs a unified UME_IMAGE bundle into standalone IMAGE and MASK tensors."""
+    """Deconstructs a UME_IMAGE bundle into native ComfyUI types."""
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -221,30 +259,75 @@ class UmeAiRT_Unpack_ImageBundle:
             }
         }
 
-    RETURN_TYPES = ("IMAGE", "MASK")
-    RETURN_NAMES = ("image", "mask")
+    RETURN_TYPES = ("IMAGE", "MASK", "STRING", "FLOAT", "BOOLEAN")
+    RETURN_NAMES = ("image", "mask", "mode", "denoise", "auto_resize")
     FUNCTION = "unpack"
     CATEGORY = "UmeAiRT/Unpack"
 
     def unpack(self, image_bundle):
-        """Separates the image and its associated mask.
+        """Extracts all fields from the image bundle.
 
         Args:
-            image_bundle (dict): The bundled mapping containing "image" and "mask" keys.
+            image_bundle (dict): The bundled mapping.
 
         Returns:
-            tuple: A tuple containing (torch.Tensor(image), torch.Tensor(mask)).
-
-        Raises:
-            ValueError: If the input object is not a valid dictionary.
+            tuple: (image, mask, mode, denoise, auto_resize).
         """
         if not isinstance(image_bundle, dict):
             raise ValueError("UmeAiRT Unpack: Input is not a valid UME_IMAGE bundle.")
-        
-        image = image_bundle.get("image")
-        mask = image_bundle.get("mask")
-        
-        return (image, mask)
+        return (
+            image_bundle.get("image"),
+            image_bundle.get("mask"),
+            image_bundle.get("mode", "img2img"),
+            float(image_bundle.get("denoise", 1.0)),
+            bool(image_bundle.get("auto_resize", False)),
+        )
+
+
+class UmeAiRT_Unpack_Pipeline:
+    """Deconstructs a UME_PIPELINE (GenerationContext) into native ComfyUI types.
+
+    This enables full interoperability: connect any output to native or community nodes.
+    """
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "pipeline": ("UME_PIPELINE", {"tooltip": "Pipeline context to unpack into native types."}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "MODEL", "CLIP", "VAE", "STRING", "STRING", "STRING", "INT", "INT", "INT", "FLOAT", "STRING", "STRING", "INT", "FLOAT")
+    RETURN_NAMES = ("image", "model", "clip", "vae", "model_name", "positive", "negative", "width", "height", "steps", "cfg", "sampler_name", "scheduler", "seed", "denoise")
+    FUNCTION = "unpack"
+    CATEGORY = "UmeAiRT/Unpack"
+
+    def unpack(self, pipeline):
+        """Extracts all fields from the GenerationContext pipeline.
+
+        Args:
+            pipeline (GenerationContext): The pipeline object.
+
+        Returns:
+            tuple: All 15 native ComfyUI outputs.
+        """
+        return (
+            pipeline.image,
+            pipeline.model,
+            pipeline.clip,
+            pipeline.vae,
+            str(pipeline.model_name or ""),
+            str(pipeline.positive_prompt or ""),
+            str(pipeline.negative_prompt or ""),
+            int(pipeline.width or 1024),
+            int(pipeline.height or 1024),
+            int(pipeline.steps or 20),
+            float(pipeline.cfg or 8.0),
+            str(pipeline.sampler_name or "euler"),
+            str(pipeline.scheduler or "normal"),
+            int(pipeline.seed or 0),
+            float(pipeline.denoise or 1.0),
+        )
 
 class UmeAiRT_Unpack_Prompt:
     """Deconstructs a UME_PROMPTS bundle into distinct Positive and Negative text strings."""
@@ -428,6 +511,7 @@ class UmeAiRT_Signature:
 # Aliases for legacy compatibility
 UmeAiRT_Unpack_SettingsBundle = UmeAiRT_Unpack_Settings
 UmeAiRT_Unpack_PromptsBundle = UmeAiRT_Unpack_Prompt
+UmeAiRT_Unpack_PipelineBundle = UmeAiRT_Unpack_Pipeline
 
 class UmeAiRT_HealthCheck:
     """Startup node to validate dependencies and optimizations."""

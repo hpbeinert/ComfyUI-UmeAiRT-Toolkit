@@ -252,8 +252,6 @@ class UmeAiRT_MultiLoraLoader:
         m, c = apply_lora(model, clip, lora_1, lora_1_name, lora_1_strength)
         m, c = apply_lora(m, c, lora_2, lora_2_name, lora_2_strength)
         m, c = apply_lora(m, c, lora_3, lora_3_name, lora_3_strength)
-        
-        UME_SHARED_STATE[KEY_LORAS] = loaded_loras
 
         return (m, c)
 

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (Architecture Refactoring)
+
+- **Hub-and-Spoke Pipeline**: The `BlockSampler` is now the central hub that creates the `GenerationContext` (`UME_PIPELINE`). Loaders and settings nodes feed into it as side-inputs.
+- **Loaders → `UME_BUNDLE`**: All 6 loader nodes (Checkpoint, FLUX, Fragmented, ZIMG, Advanced, BundleLoader) now return a single `UME_BUNDLE` dict `{model, clip, vae, model_name}` instead of three separate outputs.
+- **`GenerationSettings` → `UME_SETTINGS`**: Returns a settings dict instead of requiring a pipeline input. No longer creates a `GenerationContext`.
+- **`BlockSampler`**: Accepts `model_bundle` (UME_BUNDLE) + `settings` (UME_SETTINGS) as inputs, creates `GenerationContext` internally, stores sampled image within it, returns `UME_PIPELINE`.
+- **Post-process nodes → pipeline-only**: All 8 post-processing nodes (UltimateUpscale Simple/Advanced, SeedVR2 Simple/Advanced, FaceDetailer Simple/Advanced, Detail Daemon Simple/Advanced) now read the image from `pipeline.image` and return `UME_PIPELINE` with the updated image. No more separate image input/output.
+- **`ImageSaver` → pipeline-only**: Reads image from `pipeline.image` instead of a separate `images` input.
+- **`BlockImageProcess`**: Removed `pipeline` input dependency. Added `auto_resize` flag that is stored in the `UME_IMAGE` bundle and acted upon by the `BlockSampler` using generation settings dimensions.
+- **Display names**: Loader outputs renamed to `model_bundle`, sampler/post-process outputs renamed to `generation`.
+- **`GenerationContext`**: Added `image` field, renamed `sampler` → `sampler_name`, `positive` → `positive_prompt`, `negative` → `negative_prompt`.
+
+### Added
+
+- Custom connection colors for `UME_BUNDLE` (#3498DB, bright blue) and `UME_PIPELINE` (#1ABC9C, teal) in `web/umeairt_colors.js`.
+- **New node: `Unpack Pipeline`** — Decomposes a `UME_PIPELINE` into 15 native ComfyUI outputs (IMAGE, MODEL, CLIP, VAE, prompts, settings, denoise) for full interoperability with native and community nodes.
+- Updated `Unpack Image Bundle` to output all 5 fields: image, mask, mode, denoise, auto_resize (previously only image and mask).
+- **New node: `Pack Models Bundle`** — Packs native MODEL, CLIP, VAE into a `UME_BUNDLE` for use with Block nodes. Enables interoperability from any native or community loader into the UmeAiRT pipeline.
+
 ### Fixed
 
 - Fixed critical installation issues by synchronizing `pyproject.toml` dependencies with `requirements.txt`.
@@ -14,6 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed manifest loading bug by correcting `bundles.json` reference to `umeairt_bundles.json` in `modules/utils_nodes.py`.
 - Replaced numerous bare `except: pass` statements across the codebase with specific or generic exception handling to improve debuggability and stability.
 - Restored missing activation switches (`lora_{i}_on`) in all `UmeAiRT_LoraBlock` nodes to properly toggle LoRAs on or off.
+- Fixed `UmeAiRT_FilesSettings_Checkpoint_Advanced` incorrectly returning `UME_PIPELINE` instead of `UME_BUNDLE`, making it incompatible with the `BlockSampler`. Now returns a standard `UME_BUNDLE` dict like all other loaders.
+- Fixed `UmeAiRT_Unpack_FilesBundle` accepting obsolete `UME_FILES` type; now accepts `UME_BUNDLE`.
+- Fixed `UmeAiRT_Unpack_Settings` reading `sampler` key instead of `sampler_name`, causing it to always return the default `"euler"`.
+
+### Removed
+
+- Removed `UmeAiRT_WirelessKSampler` from `__init__.py` registrations (class was already deleted from `logic_nodes.py`, causing a latent `ImportError` at startup).
+- Removed orphaned `UME_SHARED_STATE[KEY_LORAS]` write from `MultiLoraLoader` (Block nodes no longer read from global state).
 
 ### Added
 

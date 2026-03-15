@@ -1,36 +1,62 @@
 """
 UmeAiRT Toolkit - Common Shared State & Utils
 ---------------------------------------------
-Stores the global dictionary and keys to avoid circular imports.
+Core utilities and the GenerationContext pipeline object.
 """
 
+import copy
 import torch
 from .logger import log_node
 
-# Global Storage
-UME_SHARED_STATE = {}
 
-# Internal Keys
-KEY_IMAGESIZE = "ume_internal_imagesize"
-KEY_FPS = "ume_internal_fps"
-KEY_STEPS = "ume_internal_steps"
-KEY_DENOISE = "ume_internal_denoise"
-KEY_SEED = "ume_internal_seed"
-KEY_SCHEDULER = "ume_internal_scheduler"
-KEY_SAMPLER = "ume_internal_sampler"
-KEY_CFG = "ume_internal_cfg"
-KEY_POSITIVE = "ume_internal_positive"
-KEY_NEGATIVE = "ume_internal_negative"
-KEY_MODEL = "ume_internal_model"
-KEY_VAE = "ume_internal_vae"
-KEY_CLIP = "ume_internal_clip"
-KEY_LATENT = "ume_internal_latent"
-KEY_MODEL_NAME = "ume_internal_model_name"
-KEY_LORAS = "ume_internal_loras"
-KEY_IMAGE = "ume_internal_image"
-KEY_SOURCE_IMAGE = "ume_internal_source_image"
-KEY_SOURCE_MASK = "ume_internal_source_mask"
-KEY_CONTROLNETS = "ume_internal_controlnets"
+class GenerationContext:
+    """Encapsulates all state for a single generation pipeline.
+
+    Created by the BlockSampler, this object carries models, settings,
+    prompts, and the generated image through the post-processing chain.
+    """
+    def __init__(self):
+        # Models
+        self.model = None
+        self.clip = None
+        self.vae = None
+        self.model_name = ""
+
+        # Settings
+        self.width = 1024
+        self.height = 1024
+        self.steps = 20
+        self.cfg = 8.0
+        self.sampler_name = "euler"
+        self.scheduler = "normal"
+        self.seed = 0
+        self.denoise = 1.0
+
+        # Prompts
+        self.positive_prompt = ""
+        self.negative_prompt = ""
+
+        # Generated output
+        self.image = None
+        self.latent = None
+
+        # Extras
+        self.loras = []
+        self.controlnets = []
+        self.source_image = None
+        self.source_mask = None
+
+    def clone(self):
+        """Create an independent copy for branched workflows."""
+        ctx = copy.copy(self)
+        ctx.loras = list(self.loras)
+        ctx.controlnets = list(self.controlnets)
+        return ctx
+
+    def is_ready(self):
+        """Validates that minimum required data is set for sampling."""
+        return self.model is not None and self.vae is not None and self.clip is not None
+
 
 def resize_tensor(tensor, target_h, target_w, interp_mode="bilinear", is_mask=False):
     """Resizes an image or mask tensor to the target dimensions.

@@ -75,12 +75,6 @@ const UME_NODE_COLORS = {
 
     // === WIRELESS NODES ===
 
-    // Wireless KSampler - Slate Gray (same as Block Sampler)
-    "UmeAiRT_WirelessKSampler": {
-        color: "#2C3E50",
-        bgcolor: "#1A252F"
-    },
-
     // Wireless Upscale - Pale Blue
     "UmeAiRT_WirelessUltimateUpscale": {
         color: "#2471A3",
@@ -317,6 +311,16 @@ const UME_NODE_COLORS = {
         bgcolor: "#4A290B"
     },
 
+    // Pack/Unpack Pipeline - Teal (Pipeline family)
+    "UmeAiRT_Unpack_Pipeline": {
+        color: "#17A589",
+        bgcolor: "#0B5345"
+    },
+    "UmeAiRT_Pack_Bundle": {
+        color: "#154360",
+        bgcolor: "#0A2130"
+    },
+
     // Log Viewer - Dark Grey (Utility)
     "UmeAiRT_Log_Viewer": {
         color: "#34495E",
@@ -344,13 +348,15 @@ const UME_NODE_COLORS = {
 
 // Connection slot colors - Softer, harmonious palette
 const UME_SLOT_COLORS = {
-    "UME_FILES": "#5499C7",      // Soft Blue
+    "UME_BUNDLE": "#3498DB",     // Bright Blue (model bundle)
     "UME_SETTINGS": "#CD8B62",   // Amber/Copper (matches node)
     "UME_PROMPTS": "#52BE80",    // Soft Green  
     "POSITIVE": "#52BE80",       // Soft Green for Positive
     "NEGATIVE": "#E74C3C",       // Vibrant Red for Negative
     "UME_LORA_STACK": "#9B59B6", // Purple
-    "UME_IMAGE": "#DC7633"       // Orange/Brown
+    "UME_IMAGE": "#DC7633",      // Orange/Brown
+    "UME_BUNDLE": "#3498DB",     // Bright Blue (model bundle)
+    "UME_PIPELINE": "#1ABC9C"    // Teal (generation context)
 };
 
 // Enforce minimum sizes for specific nodes (fixes Nodes 2.0 shrinking issues)

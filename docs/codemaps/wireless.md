@@ -5,6 +5,8 @@
 The "Wireless" system allows nodes to communicate without visible noodle links in the ComfyUI graph.
 It uses a Python dictionary `UME_SHARED_STATE` (located in `modules/common.py`) as a central blackboard.
 
+> **Note:** The Wireless family is **legacy**. New workflows should use the Block (Hub-and-Spoke) architecture instead. Wireless nodes are kept for backward compatibility only.
+
 ## Architecture Diagram
 
 ```mermaid
@@ -15,8 +17,7 @@ graph TD
         C[UmeAiRT_WirelessModelLoader] -->|Writes KEY_MODEL| S
     end
 
-    subgraph "Process Nodes (Getters)"
-        S -->|Reads Keys| K[UmeAiRT_WirelessKSampler]
+    subgraph "Output Nodes (Getters)"
         S -->|Reads Keys| U[UmeAiRT_WirelessUltimateUpscale]
         S -->|Reads Keys| F[UmeAiRT_WirelessFaceDetailer]
     end
@@ -44,5 +45,5 @@ Keys are defined in `modules/common.py`.
 ## Implementation Logic
 
 1. **Setters**: Classes like `UmeAiRT_Positive_Input` update the `UME_SHARED_STATE` dictionary directly in their `set_val` method.
-2. **Getters**: Classes like `UmeAiRT_WirelessKSampler` implement a `process` method that ignores standard ComfyUI inputs and instead fetches values from `UME_SHARED_STATE.get(KEY_...)`.
+2. **Getters**: Wireless process nodes (Upscalers, FaceDetailers) read from `UME_SHARED_STATE.get(KEY_...)`.
 3. **Context**: Wrapper functions (like `SamplerContext`) are used to temporarily enable optimizations or handle VRAM management during the execution of getter nodes.

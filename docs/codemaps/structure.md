@@ -6,24 +6,51 @@
 |----------------|-------------|
 | `__init__.py` | **ENTRY POINT**. Registers nodes with ComfyUI and handles theme/settings injection. |
 | `modules/` | **CORE LOGIC**. Refactored modular node implementations. |
-| `web/` | Javascript files for UI extensions (styling and Nodes 2.0 enforcements). |
+| `web/` | Javascript files for UI extensions (styling, colors, and Nodes 2.0 enforcements). |
 | `docs/` | Internal architectural documentation and code maps. |
-| `.cursorrules` | AI Agent instructions and coding standards. |
 | `AGENTS.md` | Developer guide for AI Agents. |
+
+## Architecture: Hub-and-Spoke Pipeline
+
+The toolkit uses a **hub-and-spoke** architecture centered on the `BlockSampler`:
+
+```
+Loader (UME_BUNDLE) ──┐
+Settings (UME_SETTINGS)──┤
+Prompts ──────────────────┤──▶ BlockSampler ──▶ UME_PIPELINE (GenerationContext)
+LoRAs ────────────────────┤                        │
+Source Image (UME_IMAGE) ─┘                        ├──▶ Post-Process (Upscale/Detail/Daemon)
+                                                   └──▶ ImageSaver
+```
+
+- **`UME_BUNDLE`**: dict `{model, clip, vae, model_name}` — produced by Loaders.
+- **`UME_SETTINGS`**: dict `{width, height, steps, cfg, sampler_name, scheduler, seed}` — produced by GenerationSettings.
+- **`UME_PIPELINE`**: `GenerationContext` object — created by BlockSampler, carries image + all context through post-processing chain.
+
+## Interoperability (Pack/Unpack Nodes)
+
+Pack and Unpack nodes enable bidirectional compatibility with native/community ComfyUI nodes:
+
+| Node | Direction | Description |
+|------|-----------|-------------|
+| **Pack Models Bundle** | Native → UME | Packs MODEL + CLIP + VAE into `UME_BUNDLE` |
+| **Unpack Models Bundle** | UME → Native | Extracts MODEL, CLIP, VAE, model_name from `UME_BUNDLE` |
+| **Unpack Pipeline** | UME → Native | Extracts IMAGE + all 14 fields from `UME_PIPELINE` |
+| **Unpack Settings Bundle** | UME → Native | Extracts all settings from `UME_SETTINGS` |
+| **Unpack Image Bundle** | UME → Native | Extracts IMAGE, MASK, mode, denoise, auto_resize from `UME_IMAGE` |
+| **Unpack Prompts Bundle** | UME → Native | Extracts positive/negative strings from `UME_PROMPTS` |
 
 ## Sub-Modules (`modules/`)
 
-The toolkit is organized into functional modules to maintain scalability:
-
-- `common.py`: Global constants and the `UME_SHARED_STATE` dictionary.
+- `common.py`: `GenerationContext` class, shared constants, and core utilities.
 - `logger.py`: Standardized colorized logging utility.
 - `optimization_utils.py`: Environment checks (SageAttention, Triton, etc.).
 - `settings_nodes.py`: Wireless Variable Setters/Getters (Steps, CFG, Prompts).
 - `model_nodes.py`: Wireless and Block-based Model/LoRA loaders.
-- `logic_nodes.py`: The "Brains" - Wireless Samplers, Upscalers, and Detailers.
-- `block_nodes.py`: The Block-based equivalents of samplers, loaders, and the Bundle Auto-Loader.
-- `image_nodes.py`: Wireless image loading, processing, and saving.
-- `utils_nodes.py`: Labels, state debuggers, and bundle Unpack nodes.
+- `logic_nodes.py`: Pipeline-aware Upscalers, Detailers, and Detail Daemon nodes.
+- `block_nodes.py`: Block Loaders (→ `UME_BUNDLE`), GenerationSettings (→ `UME_SETTINGS`), BlockSampler (→ `UME_PIPELINE`), and Block post-processors.
+- `image_nodes.py`: Image loading, processing, and saving (pipeline-aware).
+- `utils_nodes.py`: Labels, state debuggers, Pack/Unpack nodes.
 
 ## Core Directories (Vendored/Integrated)
 

@@ -6,12 +6,7 @@ import folder_paths
 import nodes as comfy_nodes
 import comfy.sd
 import comfy.utils
-from .common import (
-    UME_SHARED_STATE, KEY_MODEL, KEY_CLIP, KEY_VAE, KEY_LORAS, KEY_CONTROLNETS,
-    KEY_POSITIVE, KEY_NEGATIVE, KEY_LATENT, KEY_SEED, KEY_STEPS, KEY_CFG,
-    KEY_SAMPLER, KEY_SCHEDULER, KEY_DENOISE, KEY_SOURCE_IMAGE, KEY_SOURCE_MASK,
-    KEY_IMAGESIZE, KEY_MODEL_NAME, resize_tensor, log_node
-)
+from .common import GenerationContext, resize_tensor, log_node
 from .logger import logger, log_progress
 from .logic_nodes import UmeAiRT_WirelessUltimateUpscale_Base
 from .optimization_utils import SamplerContext
@@ -149,7 +144,6 @@ class UmeAiRT_ControlNetImageApply_Advanced:
             cnet_stack.append((control_net_name, control_use_image, strength, start_percent, end_percent))
             
         new_bundle["controlnets"] = cnet_stack
-        UME_SHARED_STATE[KEY_CONTROLNETS] = cnet_stack
 
         return (new_bundle,)
 
@@ -193,6 +187,7 @@ class UmeAiRT_ControlNetImageProcess:
                 "strength": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 2.0, "step": 0.05}),
             },
             "optional": {
+                "pipeline": ("UME_PIPELINE", {"tooltip": "Optional pipeline for resize dimensions."}),
                 "resize": ("BOOLEAN", {"default": False, "label_on": "ON", "label_off": "OFF"}),
             }
         }
@@ -201,7 +196,7 @@ class UmeAiRT_ControlNetImageProcess:
     FUNCTION = "process"
     CATEGORY = "UmeAiRT/Blocks/ControlNet"
 
-    def process(self, image_bundle, denoise, mode, control_net_name, strength, resize=False):
+    def process(self, image_bundle, denoise, mode, control_net_name, strength, pipeline=None, resize=False):
         if not isinstance(image_bundle, dict): raise ValueError("ControlNet Image Process: Input is not a valid UME_IMAGE bundle.")
         
         image = image_bundle.get("image")
@@ -218,9 +213,8 @@ class UmeAiRT_ControlNetImageProcess:
         final_mask = mask
         
         if resize:
-             size = UME_SHARED_STATE.get(KEY_IMAGESIZE, {"width": 1024, "height": 1024})
-             target_w = int(size.get("width", 1024))
-             target_h = int(size.get("height", 1024))
+             target_w = pipeline.width if pipeline else 1024
+             target_h = pipeline.height if pipeline else 1024
              final_image = resize_tensor(final_image, target_h, target_w, interp_mode="bilinear")
              if final_mask is not None:
                  final_mask = resize_tensor(final_mask, target_h, target_w, interp_mode="nearest", is_mask=True)
@@ -245,7 +239,6 @@ class UmeAiRT_ControlNetImageProcess:
             cnet_stack.append((control_net_name, final_image, strength, 0.0, 1.0))
         
         new_bundle["controlnets"] = cnet_stack
-        UME_SHARED_STATE[KEY_CONTROLNETS] = cnet_stack
 
         return (new_bundle,)
 
@@ -254,7 +247,7 @@ class UmeAiRT_ControlNetImageProcess:
 
 
 class UmeAiRT_GenerationSettings:
-    """Compact parameter builder mapping foundational diffusion variables into a UME_SETTINGS bundle."""
+    """Standalone settings node — outputs a dict of generation parameters."""
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -274,22 +267,14 @@ class UmeAiRT_GenerationSettings:
     CATEGORY = "UmeAiRT/Blocks/Generation"
 
     def process(self, width, height, steps, cfg, sampler_name, scheduler, seed):
-        UME_SHARED_STATE[KEY_IMAGESIZE] = {"width": width, "height": height}
-        UME_SHARED_STATE[KEY_STEPS] = steps
-        UME_SHARED_STATE[KEY_CFG] = cfg
-        UME_SHARED_STATE[KEY_SAMPLER] = sampler_name
-        UME_SHARED_STATE[KEY_SCHEDULER] = scheduler
-        UME_SHARED_STATE[KEY_SEED] = seed
-        return ({
-            "width": width, "height": height, "steps": steps, "cfg": cfg,
-            "sampler": sampler_name, "scheduler": scheduler, "seed": seed
-        },)
+        return ({"width": width, "height": height, "steps": steps, "cfg": cfg, "sampler_name": sampler_name, "scheduler": scheduler, "seed": seed},)
+
 
 
 # --- Files / Model Loaders (Block) ---
 
 class UmeAiRT_FilesSettings_Checkpoint:
-    """Basic Loader for Standard Checkpoints."""
+    """Basic Loader for Standard Checkpoints. Returns raw MODEL, CLIP, VAE."""
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -297,28 +282,14 @@ class UmeAiRT_FilesSettings_Checkpoint:
                 "ckpt_name": (folder_paths.get_filename_list("checkpoints"),),
             }
         }
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("files",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load"
     CATEGORY = "UmeAiRT/Blocks/Loaders"
     
     def load(self, ckpt_name):
-        """Loads a model, clip, and vae from a single checkpoint file.
-
-        Args:
-            ckpt_name (str): The filename of the checkpoint.
-
-        Returns:
-            tuple: A tuple containing the `{"model": model, "clip": clip, "vae": vae, "model_name": ckpt_name}` bundle.
-        """
         model, clip, vae = comfy_nodes.CheckpointLoaderSimple().load_checkpoint(ckpt_name)
-        
-        UME_SHARED_STATE[KEY_MODEL] = model
-        UME_SHARED_STATE[KEY_CLIP] = clip
-        UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = ckpt_name
-        
-        log_node(f"Block Checkpoint Loaded: {ckpt_name}", color="GREEN")
+        log_node(f"Checkpoint Loaded: {ckpt_name}", color="GREEN")
         return ({"model": model, "clip": clip, "vae": vae, "model_name": ckpt_name},)
 
 class UmeAiRT_FilesSettings_Checkpoint_Advanced:
@@ -339,8 +310,8 @@ class UmeAiRT_FilesSettings_Checkpoint_Advanced:
             }
         }
 
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("models",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load_files"
     CATEGORY = "UmeAiRT/Blocks"
 
@@ -372,21 +343,9 @@ class UmeAiRT_FilesSettings_Checkpoint_Advanced:
              clip = clip.clone()
              clip.clip_layer(clip_skip)
 
-        # 4. Update Global State
-        UME_SHARED_STATE[KEY_MODEL] = model
-        UME_SHARED_STATE[KEY_CLIP] = clip
-        UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = ckpt_name
-        UME_SHARED_STATE[KEY_LORAS] = [] # Reset LoRAs on new checkpoint load
-
-        # 5. Return Bundle
-        files = {
-            "model": model,
-            "clip": clip,
-            "vae": vae,
-            "model_name": ckpt_name
-        }
-        return (files,)
+        # 4. Return Bundle
+        log_node(f"Checkpoint Advanced Loaded: {ckpt_name}", color="GREEN")
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": ckpt_name},)
 
 
 class UmeAiRT_FilesSettings_FLUX:
@@ -407,25 +366,12 @@ class UmeAiRT_FilesSettings_FLUX:
             }
         }
 
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("models",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load_files"
     CATEGORY = "UmeAiRT/Blocks/Models"
 
     def load_files(self, unet_name, weight_dtype, clip_name1, clip_name2, vae_name):
-        """Loads a FLUX model with explicit weight dtype.
-
-        Args:
-            unet_name (str): The UNET filename.
-            weight_dtype (str): The weight data type (e.g. fp8_e4m3fn).
-            clip_name1 (str): The primary CLIP filename.
-            clip_name2 (str): The secondary CLIP filename.
-            vae_name (str): The VAE filename.
-
-        Returns:
-            tuple: A tuple containing the bundled models.
-        """
-        # 1. Load UNET (with weight dtype)
         unet_path = folder_paths.get_full_path("unet", unet_name)
         model_options = {}
         if weight_dtype == "fp8_e4m3fn":
@@ -434,31 +380,15 @@ class UmeAiRT_FilesSettings_FLUX:
             model_options["dtype"] = torch.float8_e5m2
         model = comfy.sd.load_diffusion_model(unet_path, model_options=model_options)
         
-        # 2. Load CLIPs (Dual Clip Loader Logic)
         clip_path1 = folder_paths.get_full_path("clip", clip_name1)
         clip_path2 = folder_paths.get_full_path("clip", clip_name2)
         clip = comfy.sd.load_clip(ckpt_paths=[clip_path1, clip_path2], embedding_directory=folder_paths.get_folder_paths("embeddings"))
 
-        # 3. Load VAE
         vae_path = folder_paths.get_full_path("vae", vae_name)
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
 
-        # 4. Update Global State
-        UME_SHARED_STATE[KEY_MODEL] = model
-        UME_SHARED_STATE[KEY_CLIP] = clip
-        UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = unet_name
-        UME_SHARED_STATE[KEY_LORAS] = [] # Reset LoRAs on new checkpoint load
-
-        # 5. Return Bundle
-        files = {
-            "model": model,
-            "clip": clip,
-            "vae": vae,
-            "model_name": unet_name
-        }
-        log_node(f"Block Checkpoint (FLUX) Loaded: {unet_name}", color="GREEN")
-        return (files,)
+        log_node(f"FLUX Loaded: {unet_name}", color="GREEN")
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": unet_name},)
 
 
 class UmeAiRT_FilesSettings_Fragmented:
@@ -503,107 +433,50 @@ class UmeAiRT_FilesSettings_Fragmented:
                 "device": (["default", "cpu"], {"advanced": True, "tooltip": "Device to load the model on (default is GPU)."}),
             }
         }
-
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("models",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load_files"
     CATEGORY = "UmeAiRT/Blocks/Models"
 
     def load_files(self, model_name, clip_name, vae_name, weight_dtype="default", clip_type="stable_diffusion", clip_skip=-1, device="default"):
-        """Loads components from multiple distinct folders with explicit typing.
-
-        Args:
-            model_name (str): The model/unet filename.
-            clip_name (str): The clip filename.
-            vae_name (str): The vae filename.
-            weight_dtype (str, optional): The model dtype. Defaults to "default".
-            clip_type (str, optional): The clip architecture type. Defaults to "stable_diffusion".
-            clip_skip (int, optional): The clip skip layer. Defaults to -1.
-            device (str, optional): The target device. Defaults to "default".
-
-        Returns:
-            tuple: A tuple containing the bundled models.
-        """
-        # 1. Load Model (Checkpoint/UNET)
-        # Determine path and type
+        """Loads components from multiple distinct folders with explicit typing."""
         ckpt_path = folder_paths.get_full_path("checkpoints", model_name)
         diff_path = folder_paths.get_full_path("diffusion_models", model_name)
         unet_path = folder_paths.get_full_path("unet", model_name)
-
         model = None
-        
-        # Priority: Diffusion Models/UNET -> Checkpoints
         if diff_path or unet_path:
-            # It's a Diffusion Model / UNET
             final_path = diff_path if diff_path else unet_path
-            
-            # Use load_diffusion_model with dtype options
             model_options = {}
-            if weight_dtype == "fp8_e4m3fn":
-                model_options["dtype"] = torch.float8_e4m3fn
-            elif weight_dtype == "fp8_e4m3fn_fast":
-                model_options["dtype"] = torch.float8_e4m3fn
-                model_options["fp8_optimizations"] = True
-            elif weight_dtype == "fp8_e5m2":
-                model_options["dtype"] = torch.float8_e5m2
-            
-            # Using comfy.sd.load_diffusion_model directly matches native UNETLoader
+            if weight_dtype == "fp8_e4m3fn": model_options["dtype"] = torch.float8_e4m3fn
+            elif weight_dtype == "fp8_e4m3fn_fast": model_options["dtype"] = torch.float8_e4m3fn; model_options["fp8_optimizations"] = True
+            elif weight_dtype == "fp8_e5m2": model_options["dtype"] = torch.float8_e5m2
             model = comfy.sd.load_diffusion_model(final_path, model_options=model_options)
-            log_node(f"Fragmented Model (UNET) Loaded: {model_name} [{weight_dtype}]", color="GREEN")
-
         elif ckpt_path:
-            # It's a Checkpoint
             out = comfy.sd.load_checkpoint_guess_config(ckpt_path, output_vae=True, output_clip=True, embedding_directory=folder_paths.get_folder_paths("embeddings"))
             model = out[0]
-            log_node(f"Fragmented Model (Checkpoint) Loaded: {model_name}", color="GREEN")
         else:
             raise ValueError(f"Fragmented Loader: Model '{model_name}' not found.")
         
-        # 2. Load CLIP (Text Encoder)
         clip_path = folder_paths.get_full_path("clip", clip_name)
         if clip_path is None:
-            try:
-                clip_path = folder_paths.get_full_path("text_encoders", clip_name)
-            except Exception:
-                pass
-        
+            try: clip_path = folder_paths.get_full_path("text_encoders", clip_name)
+            except Exception: pass
         if clip_path is None:
-            raise ValueError(f"Fragmented Loader: Could not find CLIP file '{clip_name}' in 'clip' or 'text_encoders' folders.")
-
-        # Prepare CLIP Type & Options
+            raise ValueError(f"Fragmented Loader: Could not find CLIP file '{clip_name}'.")
         clip_type_enum = getattr(comfy.sd.CLIPType, clip_type.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
         clip_options = {}
-        if device == "cpu":
-            clip_options["load_device"] = clip_options["offload_device"] = torch.device("cpu")
-
-        # Load CLIP with type and options
+        if device == "cpu": clip_options["load_device"] = clip_options["offload_device"] = torch.device("cpu")
         clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=clip_type_enum, model_options=clip_options)
 
-        # 3. Load VAE
         vae_path = folder_paths.get_full_path("vae", vae_name)
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
 
-        # 4. CLIP Skip
         if clip_skip != -1:
              clip = clip.clone()
              clip.clip_layer(clip_skip)
 
-        # 5. Update Global State
-        UME_SHARED_STATE[KEY_MODEL] = model
-        UME_SHARED_STATE[KEY_CLIP] = clip
-        UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = model_name
-        UME_SHARED_STATE[KEY_LORAS] = []
-
-        # 6. Return Bundle
-        files = {
-            "model": model,
-            "clip": clip,
-            "vae": vae,
-            "model_name": model_name
-        }
-        log_node(f"Block Fragmented Loaded: {model_name}", color="GREEN")
-        return (files,)
+        log_node(f"Fragmented Loaded: {model_name}", color="GREEN")
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": model_name},)
 
 class UmeAiRT_FilesSettings_ZIMG:
     """
@@ -655,91 +528,42 @@ class UmeAiRT_FilesSettings_ZIMG:
             }
         }
 
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("models",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load_files"
     CATEGORY = "UmeAiRT/Blocks/Loaders"
 
     def load_files(self, model_name, clip_name, vae_name):
-        """Loads models tailored for the Z-IMG unified format, including auto-dtype detection and GGUF support.
-
-        Args:
-            model_name (str): The diffusion model filename.
-            clip_name (str): The clip filename.
-            vae_name (str): The vae filename.
-
-        Returns:
-            tuple: A tuple containing the bundled models.
-        """
-        # 1. Load Model (Z-IMG / Diffusion Model)
+        """Loads models tailored for the Z-IMG format."""
         if model_name.endswith(".gguf"):
             from ..vendor.comfyui_gguf.gguf_nodes import UnetLoaderGGUF
             model = UnetLoaderGGUF().load_unet(model_name)[0]
-            log_node(f"Z-IMG Model Loader: Loaded '{model_name}' [Type: GGUF]")
         else:
             diff_path = folder_paths.get_full_path("diffusion_models", model_name)
             if not diff_path:
-                raise ValueError(f"Z-IMG Loader: Model '{model_name}' not found in 'diffusion_models'.")
-
-            # Auto-Detect Weight DType
+                raise ValueError(f"Z-IMG Loader: Model '{model_name}' not found.")
             model_options = {}
-            detected_dtype = "default"
-            
-            if "e4m3fn" in model_name.lower():
-                model_options["dtype"] = torch.float8_e4m3fn
-                detected_dtype = "fp8_e4m3fn"
-            elif "e5m2" in model_name.lower():
-                model_options["dtype"] = torch.float8_e5m2
-                detected_dtype = "fp8_e5m2"
-            
-            # Load Model
+            if "e4m3fn" in model_name.lower(): model_options["dtype"] = torch.float8_e4m3fn
+            elif "e5m2" in model_name.lower(): model_options["dtype"] = torch.float8_e5m2
             model = comfy.sd.load_diffusion_model(diff_path, model_options=model_options)
-            log_node(f"Z-IMG Model Loader: Loaded '{model_name}' [Auto-DType: {detected_dtype}]")
-        
-        # 2. Load CLIP (Hardcoded to LUMINA2 or loaded via GGUF)
+
         if clip_name.endswith(".gguf"):
             from ..vendor.comfyui_gguf.gguf_nodes import CLIPLoaderGGUF
             clip = CLIPLoaderGGUF().load_clip(clip_name, type="lumina2")[0]
-            log_node(f"Z-IMG CLIP Loader: Loaded '{clip_name}' [Type: GGUF LUMINA2]")
         else:
             clip_path = folder_paths.get_full_path("clip", clip_name)
             if clip_path is None:
-                try:
-                    clip_path = folder_paths.get_full_path("text_encoders", clip_name)
-                except Exception:
-                     pass
-            
+                try: clip_path = folder_paths.get_full_path("text_encoders", clip_name)
+                except Exception: pass
             if clip_path is None:
-                raise ValueError(f"Z-IMG Loader: Could not find CLIP file '{clip_name}'.")
+                raise ValueError(f"Z-IMG Loader: CLIP '{clip_name}' not found.")
+            clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=comfy.sd.CLIPType.LUMINA2)
 
-            # Hardcoded LUMINA2 type
-            clip_type_enum = comfy.sd.CLIPType.LUMINA2
-            # Default device options
-            clip_options = {}
-
-            # Load CLIP
-            clip = comfy.sd.load_clip(ckpt_paths=[clip_path], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=clip_type_enum, model_options=clip_options)
-            log_node(f"Z-IMG CLIP Loader: Loaded '{clip_name}' [Type: LUMINA2]")
-
-        # 3. Load VAE
         vae_path = folder_paths.get_full_path("vae", vae_name)
         vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
 
-        # 4. Update Global State
-        UME_SHARED_STATE[KEY_MODEL] = model
-        UME_SHARED_STATE[KEY_CLIP] = clip
-        UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = model_name
-        UME_SHARED_STATE[KEY_LORAS] = []
-
-        # 5. Return Bundle
-        files = {
-            "model": model,
-            "clip": clip,
-            "vae": vae,
-            "model_name": model_name
-        }
-        return (files,)
+        log_node(f"Z-IMG Loaded: {model_name}", color="GREEN")
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": model_name},)
 
 
 # --- Image Blocks ---
@@ -775,9 +599,6 @@ class UmeAiRT_BlockImageLoader(comfy_nodes.LoadImage):
         """
         out = super().load_image(image)
         img, mask = out[0], out[1]
-        
-        UME_SHARED_STATE[KEY_SOURCE_IMAGE] = img
-        UME_SHARED_STATE[KEY_SOURCE_MASK] = mask
 
         image_bundle = {"image": img, "mask": mask, "mode": "img2img", "denoise": 0.75}
         return (image_bundle,)
@@ -812,7 +633,7 @@ class UmeAiRT_BlockImageProcess:
                 "mode": (["img2img", "inpaint", "outpaint", "txt2img"], {"default": "img2img"}),
             },
             "optional": {
-                "resize": ("BOOLEAN", {"default": False, "label_on": "ON", "label_off": "OFF"}),
+                "auto_resize": ("BOOLEAN", {"default": False, "label_on": "Resize to Settings", "label_off": "Keep Original"}),
                 "mask_blur": ("INT", {"default": 10}),
                 "padding_left": ("INT", {"default": 0}), "padding_top": ("INT", {"default": 0}),
                 "padding_right": ("INT", {"default": 0}), "padding_bottom": ("INT", {"default": 0}),
@@ -823,24 +644,9 @@ class UmeAiRT_BlockImageProcess:
     FUNCTION = "process_image"
     CATEGORY = "UmeAiRT/Blocks/Images"
 
-    def process_image(self, image_bundle, denoise=0.75, mode="img2img", resize=False, mask_blur=0, 
+    def process_image(self, image_bundle, denoise=0.75, mode="img2img", auto_resize=False, mask_blur=0, 
                       padding_left=0, padding_top=0, padding_right=0, padding_bottom=0):
-        """Modifies the image state based on the chosen mode.
-
-        Args:
-            image_bundle (dict): The target dictionary containing image data.
-            denoise (float, optional): Diffusion interference depth. Defaults to 0.75.
-            mode (str, optional): Scenario switch (Img2Img, Inpaint). Defaults to "img2img".
-            resize (bool, optional): Stretch to match global settings. Defaults to False.
-            mask_blur (int, optional): Inpaint gradient transition bleed. Defaults to 0.
-            padding_left (int, optional): Horizontal shift. Defaults to 0.
-            padding_top (int, optional): Vertical shift. Defaults to 0.
-            padding_right (int, optional): Horizontal shift. Defaults to 0.
-            padding_bottom (int, optional): Vertical shift. Defaults to 0.
-
-        Returns:
-            tuple: The updated bundle with a new state.
-        """
+        """Modifies the image state based on the chosen mode."""
         
         image = image_bundle.get("image")
         mask = image_bundle.get("mask")
@@ -853,20 +659,7 @@ class UmeAiRT_BlockImageProcess:
              mask = None 
 
         B, H, W, C = image.shape
-        target_w, target_h = W, H
-        
         final_image, final_mask = image, mask
-        
-        if resize:
-             size = UME_SHARED_STATE.get(KEY_IMAGESIZE, {"width": 1024, "height": 1024})
-             target_w = int(size.get("width", 1024))
-             target_h = int(size.get("height", 1024))
-
-             final_image = resize_tensor(final_image, target_h, target_w, interp_mode="bilinear")
-             if final_mask is not None:
-                 final_mask = resize_tensor(final_mask, target_h, target_w, interp_mode="nearest", is_mask=True)
-             
-             B, H, W, C = final_image.shape
 
         if mode == "outpaint":
              pad_l, pad_t, pad_r, pad_b = padding_left, padding_top, padding_right, padding_bottom
@@ -887,8 +680,6 @@ class UmeAiRT_BlockImageProcess:
                      if len(final_mask.shape) == 2: new_mask = m_padded.squeeze(0)
                      else: new_mask = m_padded
 
-                 # Set Padded Areas to 1.0 (Inpaint) - ComfyUI standard: 1.0 = generate, 0.0 = keep
-                 # We add a slight overlap (8 px) into the original image so the AI can blend the edge seamlessly
                  overlap = 8
                  if pad_t > 0: new_mask[:, :pad_t + overlap, :] = 1.0
                  if pad_b > 0: new_mask[:, -(pad_b + overlap):, :] = 1.0
@@ -908,11 +699,6 @@ class UmeAiRT_BlockImageProcess:
                       else: new_mask = m_b.squeeze(1)
                  
                  final_mask = new_mask
-                 
-                 
-                 # The 'replicate' padding above provides the edge colors for the outpaint region.
-                 # The mask ensures those areas are re-generated. No need for VAEEncodeForInpaint here, 
-                 # as it destructively turns the padded areas into 50% grey!
 
         if (mode == "inpaint" or mode == "outpaint") and final_mask is not None and mask_blur > 0:
              import torchvision.transforms.functional as TF
@@ -927,39 +713,31 @@ class UmeAiRT_BlockImageProcess:
         if mode == "txt2img": final_mode = "txt2img"
         elif mode == "img2img": final_mask = None
 
-        state_mask = final_mask if mode != "img2img" else None
-
-        UME_SHARED_STATE[KEY_SOURCE_IMAGE] = final_image
-        UME_SHARED_STATE[KEY_SOURCE_MASK] = state_mask
-        UME_SHARED_STATE[KEY_DENOISE] = denoise
-
-        return ({"image": final_image, "mask": final_mask, "mode": final_mode, "denoise": denoise},)
+        return ({"image": final_image, "mask": final_mask, "mode": final_mode, "denoise": denoise, "auto_resize": auto_resize},)
 
 
 # --- Processor Blocks ---
 
 class UmeAiRT_BlockSampler:
-    """Consolidated Processing Block containing VAE encode/decode logic, KSampling, ControlNet and LoRAs.
-
-    It accepts explicitly piped bundles rather than global states, ensuring 
-    deterministic graph execution for advanced isolated workflows.
+    """Central hub: receives models + settings + prompts as side-inputs,
+    creates the GenerationContext pipeline, samples, and stores the image inside.
     """
     @classmethod
     def INPUT_TYPES(s):
         return {
             "required": {
-                "models": ("UME_FILES",), 
-                "settings": ("UME_SETTINGS",),
+                "model_bundle": ("UME_BUNDLE", {"tooltip": "Model bundle from a Loader node."}),
+                "settings": ("UME_SETTINGS", {"tooltip": "Settings from Generation Settings node."}),
                 "positive": ("POSITIVE", {"forceInput": True}),
             },
             "optional": {
                 "negative": ("NEGATIVE", {"forceInput": True}),
-                "loras": ("UME_LORA_STACK",), 
-                "image": ("UME_IMAGE",), 
+                "loras": ("UME_LORA_STACK",),
+                "image": ("UME_IMAGE",),
             }
         }
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("UME_PIPELINE",)
+    RETURN_NAMES = ("generation",)
     FUNCTION = "process"
     CATEGORY = "UmeAiRT/Blocks/Samplers"
 
@@ -967,37 +745,38 @@ class UmeAiRT_BlockSampler:
         self.lora_loader = comfy_nodes.LoraLoader()
         self.cnet_loader = comfy_nodes.ControlNetLoader()
         self.cnet_apply = comfy_nodes.ControlNetApplyAdvanced()
-        
-        # Local Prompt Cache
         self._last_pos_text = None
         self._last_neg_text = None
         self._last_clip = None
         self._cached_positive = None
         self._cached_negative = None
 
-    def process(self, settings=None, models=None, loras=None, positive=None, negative=None, image=None):
-        """Unpacks all explicit pipes, delegates conditioning, and performs inference.
+    def process(self, model_bundle, settings, positive=None, negative=None, loras=None, image=None):
+        # 1. Unpack model_bundle and create GenerationContext
+        model = model_bundle["model"]
+        clip = model_bundle["clip"]
+        vae = model_bundle["vae"]
 
-        Args:
-            settings (dict, optional): Parameter dictionary (steps, size, seed).
-            models (dict, optional): Loaders mapping (unet, vae, clip).
-            loras (list, optional): Sequence of LoRA configurations.
-            positive (str, optional): Overriding prompt string.
-            negative (str, optional): Overriding constraint string.
-            image (dict, optional): The structural bounds & source mapping.
+        ctx = GenerationContext()
+        ctx.model = model
+        ctx.clip = clip
+        ctx.vae = vae
+        ctx.model_name = model_bundle.get("model_name", "")
 
-        Returns:
-            tuple: The tensor result wrapping the `(generated_image,)`.
-        """
+        # 2. Apply settings
+        ctx.width = settings.get("width", 1024)
+        ctx.height = settings.get("height", 1024)
+        ctx.steps = settings.get("steps", 20)
+        ctx.cfg = settings.get("cfg", 8.0)
+        ctx.sampler_name = settings.get("sampler_name", "euler")
+        ctx.scheduler = settings.get("scheduler", "normal")
+        ctx.seed = settings.get("seed", 0)
+
         controlnets = []
         if image and isinstance(image, dict):
             controlnets = image.get("controlnets", [])
 
-        if models:
-            model, vae, clip = models.get("model"), models.get("vae"), models.get("clip")
-        else:
-            model, vae, clip = UME_SHARED_STATE.get(KEY_MODEL), UME_SHARED_STATE.get(KEY_VAE), UME_SHARED_STATE.get(KEY_CLIP)
-
+        # 3. Apply LoRAs
         if loras:
             if not model or not clip: raise ValueError("Block Sampler: No base Model/CLIP for LoRAs.")
             loaded_loras_meta = []
@@ -1009,54 +788,56 @@ class UmeAiRT_BlockSampler:
                          loaded_loras_meta.append({"name": name, "strength": str_model})
                     except Exception as e:
                         log_node(f"Block Sampler LoRA Error ({name}): {e}", color="RED")
-            
-            UME_SHARED_STATE[KEY_MODEL] = model
-            UME_SHARED_STATE[KEY_CLIP] = clip
-            UME_SHARED_STATE[KEY_LORAS] = loaded_loras_meta
-        
+            ctx.model = model
+            ctx.clip = clip
+            ctx.loras = loaded_loras_meta
+
         if not model or not vae or not clip: raise ValueError("Block Sampler: Missing Model/VAE/CLIP.")
 
-        if settings:
-            width, height = settings.get("width", 1024), settings.get("height", 1024)
-            steps, cfg = settings.get("steps", 20), settings.get("cfg", 8.0)
-            sampler_name, scheduler = settings.get("sampler", "euler"), settings.get("scheduler", "normal")
-            seed = settings.get("seed", 0)
-        else:
-            size = UME_SHARED_STATE.get(KEY_IMAGESIZE, {"width": 1024, "height": 1024})
-            width, height = int(size.get("width", 1024)), int(size.get("height", 1024))
-            steps = UME_SHARED_STATE.get(KEY_STEPS, 20)
-            cfg = UME_SHARED_STATE.get(KEY_CFG, 8.0)
-            sampler_name, scheduler = UME_SHARED_STATE.get(KEY_SAMPLER, "euler"), UME_SHARED_STATE.get(KEY_SCHEDULER, "normal")
-            seed = UME_SHARED_STATE.get(KEY_SEED, 0)
-        
-        denoise = image.get("denoise", 1.0) if image else 1.0
+        width, height = ctx.width, ctx.height
+        steps, cfg = ctx.steps, ctx.cfg
+        sampler_name, scheduler = ctx.sampler_name, ctx.scheduler
+        seed = ctx.seed
 
-        # Handle Prompts (Discrete Inputs fallback to Wireless)
-        pos_text = positive if positive is not None else str(UME_SHARED_STATE.get(KEY_POSITIVE, ""))
-        neg_text = negative if negative is not None else str(UME_SHARED_STATE.get(KEY_NEGATIVE, ""))
+        denoise = image.get("denoise", 1.0) if image else ctx.denoise
+        ctx.denoise = denoise
+
+        # 4. Handle Prompts
+        pos_text = positive if positive is not None else ""
+        neg_text = negative if negative is not None else ""
+        ctx.positive_prompt = pos_text
+        ctx.negative_prompt = neg_text
 
         latent_image = None
         mode_str = "txt2img"
         raw_image, source_mask = None, None
-        
+
         if image:
              raw_image = image.get("image")
              source_mask = image.get("mask")
              mode_str = image.get("mode", "img2img")
-             
+             auto_resize = image.get("auto_resize", False)
+
+             # Auto-resize source image to settings dimensions
+             if auto_resize and raw_image is not None:
+                 raw_image = resize_tensor(raw_image, height, width, interp_mode="bilinear")
+                 if source_mask is not None:
+                     source_mask = resize_tensor(source_mask, height, width, interp_mode="nearest", is_mask=True)
+                 log_node(f"Block Sampler: Auto-resized source to {width}x{height}", color="YELLOW")
+
+             ctx.source_image = raw_image
+             ctx.source_mask = source_mask
+
              if mode_str in ["inpaint", "outpaint"] and source_mask is not None:
-                 # For inpaint/outpaint, we MUST encode the image and apply the noise_mask
-                 # even if denoise is 1.0, otherwise the whole image gets regenerated.
                  latent_image = comfy_nodes.VAEEncode().encode(vae, raw_image)[0]
                  latent_image["noise_mask"] = source_mask
              elif denoise < 1.0:
                  latent_image = comfy_nodes.VAEEncode().encode(vae, raw_image)[0]
 
-        if latent_image is None:
-             wireless_latent = UME_SHARED_STATE.get(KEY_LATENT)
-             if wireless_latent is not None: latent_image = wireless_latent
+        if latent_image is None and ctx.latent is not None:
+             latent_image = ctx.latent
 
-             # Empty Latent — detect channels from model (SD=4, FLUX=16)
+        # 5. Empty Latent — detect channels from model (SD=4, FLUX=16)
         if latent_image is None:
              latent_channels = 4
              try:
@@ -1067,6 +848,7 @@ class UmeAiRT_BlockSampler:
              latent_image = {"samples": l}
              denoise = 1.0
 
+        # 6. Encode prompts
         if self._last_pos_text == pos_text and self._last_neg_text == neg_text and self._last_clip is clip:
              positive_cond = self._cached_positive
              negative_cond = self._cached_negative
@@ -1080,7 +862,7 @@ class UmeAiRT_BlockSampler:
              tokens = clip.tokenize(neg_text)
              cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
              negative_cond = [[cond, {"pooled_output": pooled}]]
-             
+
              self._last_pos_text = pos_text
              self._last_neg_text = neg_text
              self._last_clip = clip
@@ -1097,39 +879,40 @@ class UmeAiRT_BlockSampler:
                     except Exception as e: log_node(f"Block Sampler ControlNet Error: {e}", color="RED")
 
         log_node(f"Block Sampler: {mode_str} | {width}x{height} | Steps: {steps} | CFG: {cfg}")
-        
+
         from .optimization_utils import warmup_vae
         warmup_vae(vae, latent_image)
-        
+
+        # 7. Sample
         try:
              with SamplerContext():
                  result_latent = comfy_nodes.KSampler().sample(model, seed, steps, cfg, sampler_name, scheduler, positive_cond, negative_cond, latent_image, denoise)[0]
         except Exception as e:
              raise RuntimeError(f"Sampling Failed: {e}")
 
+        # 8. Decode & store image in pipeline
         log_node("Block Sampler: Decoding VAE")
         image_out = comfy_nodes.VAEDecode().decode(vae, result_latent)[0]
 
         if mode_str == "inpaint" and raw_image is not None and source_mask is not None:
              try:
                  B, H, W, C = image_out.shape
-                 source_resized = resize_tensor(raw_image, H, W, interp_mode="bilinear") # Ensure match
+                 source_resized = resize_tensor(raw_image, H, W, interp_mode="bilinear")
                  mask_resized = resize_tensor(source_mask, H, W, interp_mode="bilinear", is_mask=True)
-                 
                  m = mask_resized
                  if len(m.shape) == 2: m = m.unsqueeze(0).unsqueeze(-1)
                  elif len(m.shape) == 3: m = m.unsqueeze(-1)
-                 
                  if m.shape[0] < B: m = m.repeat(B, 1, 1, 1)
                  if source_resized.shape[0] < B: source_resized = source_resized.repeat(B, 1, 1, 1)
-                 
                  m = torch.clamp(m, 0.0, 1.0)
                  image_out = source_resized * (1.0 - m) + image_out * m
                  log_node("Block Inpaint: Auto-Composited.", color="GREEN")
              except Exception as e:
                  log_node(f"Block Inpaint Composite Failed: {e}", color="RED")
 
-        return (image_out,)
+        ctx.image = image_out
+        ctx.latent = result_latent
+        return (ctx,)
 
 class UmeAiRT_BlockUltimateSDUpscale(UmeAiRT_WirelessUltimateUpscale_Base):
     """Rigidly integrated node for UltimateSDUpscale explicitly mapping piped inputs."""
@@ -1139,11 +922,9 @@ class UmeAiRT_BlockUltimateSDUpscale(UmeAiRT_WirelessUltimateUpscale_Base):
         usdu_modes = ["Linear", "Chess", "None"]
         return {
             "required": { 
-                "image": ("IMAGE",), 
+                "pipeline": ("UME_PIPELINE", {"tooltip": "Pipeline context with image."}),
                 "model": (folder_paths.get_filename_list("upscale_models"),), 
                 "upscale_by": ("FLOAT", {"default": 2.0}),
-                "settings": ("UME_SETTINGS",), 
-                "models": ("UME_FILES",), 
             },
             "optional": { 
                 "prompts": ("UME_PROMPTS",),
@@ -1154,32 +935,17 @@ class UmeAiRT_BlockUltimateSDUpscale(UmeAiRT_WirelessUltimateUpscale_Base):
                 "tile_padding": ("INT", {"default": 32}), 
             }
         }
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("UME_PIPELINE",)
+    RETURN_NAMES = ("generation",)
     FUNCTION = "upscale"
     CATEGORY = "UmeAiRT/Blocks/Post-Processing"
 
-    def upscale(self, image, model, upscale_by, settings=None, models=None, loras=None, prompts=None, denoise=0.35, clean_prompt=True, mode_type="Linear", tile_padding=32):
-        """Splices Block inputs with the embedded UltimateSDUpscale math.
+    def upscale(self, pipeline, model, upscale_by, loras=None, prompts=None, denoise=0.35, clean_prompt=True, mode_type="Linear", tile_padding=32):
+        """Splices Block inputs with the embedded UltimateSDUpscale math."""
+        image = pipeline.image
+        if image is None: raise ValueError("Block Upscale: No image in pipeline.")
 
-        Args:
-             image (torch.Tensor): Native tensor to tile.
-             model (str): Folder path / name of the specific Upscaler network.
-             upscale_by (float): Ratio.
-             settings (dict, optional): Overriding steps, sampler, configs.
-             models (dict, optional): Overriding models payload.
-             loras (list, optional): Modifier weights.
-             prompts (dict, optional): Overriding conditioning.
-             denoise (float, optional): Intensity. Defaults to 0.35.
-             clean_prompt (bool, optional): Strip logic. Defaults to True.
-             mode_type (str, optional): Tile geometry. Defaults to "Linear".
-             tile_padding (int, optional): Overlaps. Defaults to 32.
-
-         Returns:
-             tuple: `(upscaled_image,)` tensor tuple.
-        """
-        if models: sd_model, vae, clip = models.get("model"), models.get("vae"), models.get("clip")
-        else: sd_model, vae, clip = UME_SHARED_STATE.get(KEY_MODEL), UME_SHARED_STATE.get(KEY_VAE), UME_SHARED_STATE.get(KEY_CLIP)
+        sd_model, vae, clip = pipeline.model, pipeline.vae, pipeline.clip
 
         if loras:
             for lora_def in loras:
@@ -1187,32 +953,19 @@ class UmeAiRT_BlockUltimateSDUpscale(UmeAiRT_WirelessUltimateUpscale_Base):
                 if name != "None":
                      try: sd_model, clip = self.lora_loader.load_lora(sd_model, clip, name, str_model, str_clip)
                      except Exception: pass
-            UME_SHARED_STATE[KEY_MODEL], UME_SHARED_STATE[KEY_CLIP] = sd_model, clip
 
         if not sd_model or not vae or not clip: raise ValueError("Block Upscale: Missing Model/VAE/CLIP")
 
-        if settings:
-             steps = settings.get("steps", 20)
-             cfg = settings.get("cfg", 1.0)
-             sampler_name = settings.get("sampler", "euler")
-             scheduler = settings.get("scheduler", "normal")
-             seed = settings.get("seed", 0)
-             tile_width = settings.get("width", 512)
-             tile_height = settings.get("height", 512)
-        else:
-             steps = int(UME_SHARED_STATE.get(KEY_STEPS, 20))
-             cfg = 1.0
-             sampler_name = UME_SHARED_STATE.get(KEY_SAMPLER, "euler")
-             scheduler = UME_SHARED_STATE.get(KEY_SCHEDULER, "normal")
-             seed = int(UME_SHARED_STATE.get(KEY_SEED, 0))
-             
-             size = UME_SHARED_STATE.get(KEY_IMAGESIZE, {"width": 512, "height": 512})
-             if not isinstance(size, dict): size = {"width": 512, "height": 512}
-             tile_width = int(size.get("width", 512))
-             tile_height = int(size.get("height", 512))
+        steps = pipeline.steps
+        cfg = pipeline.cfg
+        sampler_name = pipeline.sampler_name
+        scheduler = pipeline.scheduler
+        seed = pipeline.seed
+        tile_width = pipeline.width
+        tile_height = pipeline.height
 
         if prompts: pos_text, neg_text = prompts.get("positive"), prompts.get("negative")
-        else: pos_text, neg_text = str(UME_SHARED_STATE.get(KEY_POSITIVE)), str(UME_SHARED_STATE.get(KEY_NEGATIVE))
+        else: pos_text, neg_text = pipeline.positive_prompt, pipeline.negative_prompt
 
         positive, negative = self.encode_prompts(clip, "" if clean_prompt else pos_text, neg_text)
         
@@ -1229,7 +982,9 @@ class UmeAiRT_BlockUltimateSDUpscale(UmeAiRT_WirelessUltimateUpscale_Base):
                  seam_fix_mode="None", seam_fix_denoise=1.0, seam_fix_mask_blur=8, seam_fix_width=64, seam_fix_padding=16,
                  force_uniform_tiles=True, tiled_decode=False, suppress_preview=True
              )
-        return res
+        ctx = pipeline.clone()
+        ctx.image = res[0]
+        return (ctx,)
 
 class UmeAiRT_BlockFaceDetailer(UmeAiRT_WirelessUltimateUpscale_Base):
     """Integrated FaceDetailer processing blocks delegating bounds calculations via YOLO logic."""
@@ -1238,11 +993,9 @@ class UmeAiRT_BlockFaceDetailer(UmeAiRT_WirelessUltimateUpscale_Base):
     def INPUT_TYPES(s):
         return {
             "required": { 
-                "image": ("IMAGE",), 
+                "pipeline": ("UME_PIPELINE", {"tooltip": "Pipeline context with image."}),
                 "model": (folder_paths.get_filename_list("bbox"),), 
                 "denoise": ("FLOAT", {"default": 0.5}),
-                "settings": ("UME_SETTINGS",), 
-                "models": ("UME_FILES",), 
             },
             "optional": { 
                 "prompts": ("UME_PROMPTS",),
@@ -1251,30 +1004,17 @@ class UmeAiRT_BlockFaceDetailer(UmeAiRT_WirelessUltimateUpscale_Base):
                 "max_size": ("INT", {"default": 1024}), 
             }
         }
-    RETURN_TYPES = ("IMAGE",)
-    RETURN_NAMES = ("image",)
+    RETURN_TYPES = ("UME_PIPELINE",)
+    RETURN_NAMES = ("generation",)
     FUNCTION = "face_detail"
     CATEGORY = "UmeAiRT/Blocks/Post-Processing"
 
-    def face_detail(self, image, model, denoise, settings=None, models=None, loras=None, prompts=None, guide_size=512, max_size=1024):
-        """Performs iterative cropping, processing, and recompositing for detected faces.
+    def face_detail(self, pipeline, model, denoise, loras=None, prompts=None, guide_size=512, max_size=1024):
+        """Performs face detection, cropping, processing and recompositing."""
+        image = pipeline.image
+        if image is None: raise ValueError("Block FaceDetailer: No image in pipeline.")
 
-         Args:
-             image (torch.Tensor): Native target.
-             model (str): The YOLO bounding-box detection network.
-             denoise (float): Diffusion strength targeting face crops.
-             settings (dict, optional): Passed configs.
-             models (dict, optional): Extrapolated pipeline.
-             loras (list, optional): Modifier nodes.
-             prompts (dict, optional): Re-conditioning text maps.
-             guide_size (int, optional): YOLO anchor space. Defaults to 512.
-             max_size (int, optional): Image scaling ceiling. Defaults to 1024.
-
-         Returns:
-             tuple: `(composite_faces_image,)`
-        """
-        if models: sd_model, vae, clip = models.get("model"), models.get("vae"), models.get("clip")
-        else: sd_model, vae, clip = UME_SHARED_STATE.get(KEY_MODEL), UME_SHARED_STATE.get(KEY_VAE), UME_SHARED_STATE.get(KEY_CLIP)
+        sd_model, vae, clip = pipeline.model, pipeline.vae, pipeline.clip
 
         if loras:
             for lora_def in loras:
@@ -1282,15 +1022,15 @@ class UmeAiRT_BlockFaceDetailer(UmeAiRT_WirelessUltimateUpscale_Base):
                 if name != "None":
                      try: sd_model, clip = self.lora_loader.load_lora(sd_model, clip, name, str_model, str_clip)
                      except Exception: pass
-            UME_SHARED_STATE[KEY_MODEL], UME_SHARED_STATE[KEY_CLIP] = sd_model, clip
 
         if not sd_model or not vae or not clip: raise ValueError("Block FaceDetailer: Missing Model/VAE/CLIP")
 
-        if settings: steps, cfg, sampler_name, scheduler, seed = settings.get("steps", 20), settings.get("cfg", 8.0), settings.get("sampler", "euler"), settings.get("scheduler", "normal"), settings.get("seed", 0)
-        else: steps, cfg, sampler_name, scheduler, seed = int(UME_SHARED_STATE.get(KEY_STEPS, 20)), float(UME_SHARED_STATE.get(KEY_CFG, 8.0)), UME_SHARED_STATE.get(KEY_SAMPLER, "euler"), UME_SHARED_STATE.get(KEY_SCHEDULER, "normal"), int(UME_SHARED_STATE.get(KEY_SEED, 0))
+        steps, cfg = pipeline.steps, pipeline.cfg
+        sampler_name, scheduler = pipeline.sampler_name, pipeline.scheduler
+        seed = pipeline.seed
 
         if prompts: pos_text, neg_text = prompts.get("positive"), prompts.get("negative")
-        else: pos_text, neg_text = str(UME_SHARED_STATE.get(KEY_POSITIVE)), str(UME_SHARED_STATE.get(KEY_NEGATIVE))
+        else: pos_text, neg_text = pipeline.positive_prompt, pipeline.negative_prompt
 
         positive, negative = self.encode_prompts(clip, pos_text, neg_text)
         
@@ -1299,16 +1039,19 @@ class UmeAiRT_BlockFaceDetailer(UmeAiRT_WirelessUltimateUpscale_Base):
             segs = bbox_detector.detect(image, 0.5, 10, 3.0, 10)
             
             with SamplerContext():
-                return fd_logic.do_detail(
+                result = fd_logic.do_detail(
                         image=image, segs=segs, model=sd_model, clip=clip, vae=vae,
                         guide_size=guide_size, guide_size_for_bbox=True, max_size=max_size,
                         seed=seed, steps=steps, cfg=cfg, sampler_name=sampler_name, scheduler=scheduler,
                         positive=positive, negative=negative, denoise=denoise,
                         feather=5, noise_mask=True, force_inpaint=True, drop_size=10
                     )
+            ctx = pipeline.clone()
+            ctx.image = result[0]
+            return (ctx,)
         except Exception as e:
             log_node(f"FaceDetailer Error: {e}", color="RED")
-            return (image,)
+            return (pipeline,)
 
 
 # --- Bundle Auto-Loader ---
@@ -1701,194 +1444,86 @@ class UmeAiRT_BundleLoader:
             }
         }
 
-    RETURN_TYPES = ("UME_FILES",)
-    RETURN_NAMES = ("models",)
+    RETURN_TYPES = ("UME_BUNDLE",)
+    RETURN_NAMES = ("model_bundle",)
     FUNCTION = "load_bundle"
     CATEGORY = "UmeAiRT/Blocks/Loaders"
     OUTPUT_NODE = True
 
     def load_bundle(self, category, version, hf_token=""):
-        """Download missing files and load the selected model bundle.
-
-        Args:
-            category (str): The model family (e.g. 'Z-IMAGE_TURBO', 'FLUX').
-            version (str): The precision/quantization level (e.g. 'fp16', 'GGUF_Q4').
-            hf_token (str): Optional HuggingFace token for authentication.
-
-        Returns:
-            tuple: A tuple containing the UME_FILES bundle dict.
-        """
+        """Download missing files and load the selected model bundle."""
         data = _load_bundles_json()
         if category not in data:
-            raise ValueError(f"Bundle Loader: Category '{category}' not found in bundles.json.")
-
+            raise ValueError(f"Bundle Loader: Category '{category}' not found.")
         cat_data = data[category]
         meta = cat_data.get("_meta", {})
         base_url = meta.get("base_url", "")
         loader_type = meta.get("loader_type", "zimg")
         clip_type_str = meta.get("clip_type", "lumina2")
-
         if version not in cat_data:
-            raise ValueError(f"Bundle Loader: Version '{version}' not found for '{category}'.")
-
-        bundle = cat_data[version]
-        files = bundle.get("files", [])
-        min_vram = bundle.get("min_vram", 0)
-
+            raise ValueError(f"Bundle Loader: Version '{version}' not found.")
+        bundle_def = cat_data[version]
+        files = bundle_def.get("files", [])
+        min_vram = bundle_def.get("min_vram", 0)
         log_node(f"Bundle Loader: {category} / {version} (min VRAM: {min_vram}GB)")
 
-        # --- Phase 1: Check & Download ---
-        resolved_files = {}  # path_type -> list of filenames
+        resolved_files = {}
         for file_entry in files:
             pt = file_entry["path_type"]
             filename = file_entry["filename"]
             url_path = file_entry["url"]
-
             folder_types = _PATH_TYPE_TO_FOLDERS.get(pt, [pt])
             local_path = _find_file_in_folders(filename, folder_types)
-
             if local_path:
-                log_node(f"  ✅ '{filename}' found locally.", color="GREEN")
+                log_node(f"  ✅ '{filename}' found.", color="GREEN")
             else:
-                # Download
                 full_url = base_url + url_path
-                primary_folder = folder_types[0]
-                dest = _get_download_dest(filename, primary_folder)
+                dest = _get_download_dest(filename, folder_types[0])
                 _download_file(full_url, dest, hf_token=hf_token)
-                local_path = dest
-
-            if pt not in resolved_files:
-                resolved_files[pt] = []
+            if pt not in resolved_files: resolved_files[pt] = []
             resolved_files[pt].append(filename)
 
-        # --- Phase 2: Load Models ---
-        model = None
-        clip = None
-        vae = None
+        model, clip, vae = None, None, None
         model_name = ""
-
-        # 2a. Load Model (diffusion / unet)
         model_pt = None
         for pt_key in ["zimg_diff", "flux_diff", "zimg_unet", "flux_unet"]:
-            if pt_key in resolved_files:
-                model_pt = pt_key
-                break
-
+            if pt_key in resolved_files: model_pt = pt_key; break
         if model_pt:
             model_filename = resolved_files[model_pt][0]
             model_name = model_filename
-
             if model_filename.endswith(".gguf"):
                 from ..vendor.comfyui_gguf.gguf_nodes import UnetLoaderGGUF
                 model = UnetLoaderGGUF().load_unet(model_filename)[0]
-                log_node(f"Bundle Loader: Model '{model_filename}' loaded [GGUF]", color="GREEN")
             else:
-                # Find in diffusion_models or unet
-                folder_types = _PATH_TYPE_TO_FOLDERS.get(model_pt, ["diffusion_models"])
-                model_path = _find_file_in_folders(model_filename, folder_types)
-                if not model_path:
-                    raise ValueError(f"Bundle Loader: Model '{model_filename}' not found after download.")
-
-                # Auto-detect weight dtype
+                model_path = _find_file_in_folders(model_filename, _PATH_TYPE_TO_FOLDERS.get(model_pt, ["diffusion_models"]))
+                if not model_path: raise ValueError(f"Bundle Loader: Model '{model_filename}' not found.")
                 model_options = {}
-                detected_dtype = "default"
-                lower_name = model_filename.lower()
-                if "e4m3fn" in lower_name:
-                    model_options["dtype"] = torch.float8_e4m3fn
-                    detected_dtype = "fp8_e4m3fn"
-                elif "e5m2" in lower_name:
-                    model_options["dtype"] = torch.float8_e5m2
-                    detected_dtype = "fp8_e5m2"
-
+                ln = model_filename.lower()
+                if "e4m3fn" in ln: model_options["dtype"] = torch.float8_e4m3fn
+                elif "e5m2" in ln: model_options["dtype"] = torch.float8_e5m2
                 model = comfy.sd.load_diffusion_model(model_path, model_options=model_options)
-                log_node(f"Bundle Loader: Model '{model_filename}' loaded [DType: {detected_dtype}]", color="GREEN")
 
-        # 2b. Load CLIP(s)
         clip_files = resolved_files.get("clip", [])
         if clip_files:
             if loader_type == "flux" and len(clip_files) >= 2:
-                # FLUX dual-CLIP loading (t5xxl + clip_l)
-                clip_paths = []
-                for cf in clip_files:
-                    cp = _find_file_in_folders(cf, ["clip", "text_encoders"])
-                    if cp:
-                        clip_paths.append(cp)
-                    else:
-                        raise ValueError(f"Bundle Loader: CLIP '{cf}' not found.")
-                clip = comfy.sd.load_clip(
-                    ckpt_paths=clip_paths,
-                    embedding_directory=folder_paths.get_folder_paths("embeddings")
-                )
-                log_node(f"Bundle Loader: FLUX Dual-CLIP loaded ({', '.join(clip_files)})", color="GREEN")
-
-            elif len(clip_files) == 1 or loader_type == "zimg":
-                # Single-CLIP loading (Z-IMG / LUMINA2)
+                clip_paths = [_find_file_in_folders(cf, ["clip", "text_encoders"]) for cf in clip_files]
+                clip = comfy.sd.load_clip(ckpt_paths=clip_paths, embedding_directory=folder_paths.get_folder_paths("embeddings"))
+            else:
                 cf = clip_files[0]
-
                 if cf.endswith(".gguf"):
                     from ..vendor.comfyui_gguf.gguf_nodes import CLIPLoaderGGUF
                     clip = CLIPLoaderGGUF().load_clip(cf, type=clip_type_str)[0]
-                    log_node(f"Bundle Loader: CLIP '{cf}' loaded [GGUF {clip_type_str.upper()}]", color="GREEN")
                 else:
-                    clip_path = _find_file_in_folders(cf, ["clip", "text_encoders"])
-                    if not clip_path:
-                        raise ValueError(f"Bundle Loader: CLIP '{cf}' not found.")
-
-                    clip_type_enum = getattr(comfy.sd.CLIPType, clip_type_str.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
-                    clip = comfy.sd.load_clip(
-                        ckpt_paths=[clip_path],
-                        embedding_directory=folder_paths.get_folder_paths("embeddings"),
-                        clip_type=clip_type_enum
-                    )
-                    log_node(f"Bundle Loader: CLIP '{cf}' loaded [{clip_type_str.upper()}]", color="GREEN")
-
-            else:
-                # Multiple CLIP files with non-flux loader (load all with clip_type)
-                clip_paths = []
-                for cf in clip_files:
-                    if cf.endswith(".gguf"):
-                        from ..vendor.comfyui_gguf.gguf_nodes import CLIPLoaderGGUF
-                        clip = CLIPLoaderGGUF().load_clip(cf, type=clip_type_str)[0]
-                        log_node(f"Bundle Loader: CLIP '{cf}' loaded [GGUF]", color="GREEN")
-                        break
                     cp = _find_file_in_folders(cf, ["clip", "text_encoders"])
-                    if cp:
-                        clip_paths.append(cp)
-                if clip is None and clip_paths:
-                    clip_type_enum = getattr(comfy.sd.CLIPType, clip_type_str.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
-                    clip = comfy.sd.load_clip(
-                        ckpt_paths=clip_paths,
-                        embedding_directory=folder_paths.get_folder_paths("embeddings"),
-                        clip_type=clip_type_enum
-                    )
-                    log_node(f"Bundle Loader: Multi-CLIP loaded ({len(clip_paths)} files)", color="GREEN")
+                    if not cp: raise ValueError(f"Bundle Loader: CLIP '{cf}' not found.")
+                    ct = getattr(comfy.sd.CLIPType, clip_type_str.upper(), comfy.sd.CLIPType.STABLE_DIFFUSION)
+                    clip = comfy.sd.load_clip(ckpt_paths=[cp], embedding_directory=folder_paths.get_folder_paths("embeddings"), clip_type=ct)
 
-        # 2c. Load VAE
         vae_files = resolved_files.get("vae", [])
         if vae_files:
-            vf = vae_files[0]
-            vae_path = _find_file_in_folders(vf, ["vae"])
-            if not vae_path:
-                raise ValueError(f"Bundle Loader: VAE '{vf}' not found.")
-            vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vae_path))
-            log_node(f"Bundle Loader: VAE '{vf}' loaded.", color="GREEN")
-
-        # --- Phase 3: Update Global State & Return ---
-        if model:
-            UME_SHARED_STATE[KEY_MODEL] = model
-        if clip:
-            UME_SHARED_STATE[KEY_CLIP] = clip
-        if vae:
-            UME_SHARED_STATE[KEY_VAE] = vae
-        UME_SHARED_STATE[KEY_MODEL_NAME] = model_name
-        UME_SHARED_STATE[KEY_LORAS] = []
-
-        files_bundle = {
-            "model": model,
-            "clip": clip,
-            "vae": vae,
-            "model_name": model_name
-        }
+            vp = _find_file_in_folders(vae_files[0], ["vae"])
+            if not vp: raise ValueError(f"Bundle Loader: VAE '{vae_files[0]}' not found.")
+            vae = comfy.sd.VAE(sd=comfy.utils.load_torch_file(vp))
 
         log_node(f"Bundle Loader: ✅ {category}/{version} ready.", color="GREEN")
-        return (files_bundle,)
+        return ({"model": model, "clip": clip, "vae": vae, "model_name": model_name},)

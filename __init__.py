@@ -53,7 +53,6 @@ if "bbox" not in folder_paths.folder_names_and_paths:
     folder_paths.folder_names_and_paths["bbox"] = ([os.path.join(folder_paths.models_dir, "bbox")], folder_paths.supported_pt_extensions)
 
 from .modules.logic_nodes import (
-    UmeAiRT_WirelessKSampler,
     UmeAiRT_WirelessUltimateUpscale,
     UmeAiRT_WirelessUltimateUpscale_Advanced,
     UmeAiRT_WirelessSeedVR2Upscale,
@@ -93,6 +92,8 @@ from .modules.utils_nodes import (
     UmeAiRT_Unpack_PromptsBundle,
     UmeAiRT_Unpack_ImageBundle,
     UmeAiRT_Unpack_FilesBundle,
+    UmeAiRT_Unpack_Pipeline,
+    UmeAiRT_Pack_Bundle,
     UmeAiRT_Signature,
     UmeAiRT_HealthCheck
 )
@@ -153,6 +154,8 @@ NODE_CLASS_MAPPINGS = {
     "UmeAiRT_Unpack_PromptsBundle": UmeAiRT_Unpack_PromptsBundle,
     "UmeAiRT_Unpack_ImageBundle": UmeAiRT_Unpack_ImageBundle,
     "UmeAiRT_Unpack_FilesBundle": UmeAiRT_Unpack_FilesBundle,
+    "UmeAiRT_Unpack_Pipeline": UmeAiRT_Unpack_Pipeline,
+    "UmeAiRT_Pack_Bundle": UmeAiRT_Pack_Bundle,
 
     
     # Files Loaders (Block/Fragmented)
@@ -170,7 +173,6 @@ NODE_CLASS_MAPPINGS = {
 
     # Logic / Samplers
     "UmeAiRT_WirelessCheckpointLoader": UmeAiRT_WirelessCheckpointLoader,
-    "UmeAiRT_WirelessKSampler": UmeAiRT_WirelessKSampler,
     "UmeAiRT_WirelessUltimateUpscale": UmeAiRT_WirelessUltimateUpscale,
     "UmeAiRT_WirelessUltimateUpscale_Advanced": UmeAiRT_WirelessUltimateUpscale_Advanced,
     "UmeAiRT_WirelessSeedVR2Upscale": UmeAiRT_WirelessSeedVR2Upscale,
@@ -246,7 +248,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UmeAiRT_CLIP_Output": "CLIP Output",
     "UmeAiRT_Latent_Input": "Latent Input",
     "UmeAiRT_Latent_Output": "Latent Output",
-    "UmeAiRT_WirelessKSampler": "KSampler (Wireless)",
+
     "UmeAiRT_Wireless_Debug": "Wireless Debug",
     "UmeAiRT_WirelessUltimateUpscale": "Wireless UltimateSDUpscale",
     "UmeAiRT_WirelessUltimateUpscale_Advanced": "Wireless UltimateSDUpscale (Advanced)",
@@ -284,6 +286,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UmeAiRT_Detailer_Daemon_Advanced": "Detailer Daemon (Advanced)",
     "UmeAiRT_Unpack_ImageBundle": "Unpack Image Bundle",
     "UmeAiRT_Unpack_FilesBundle": "Unpack Models Bundle",
+    "UmeAiRT_Unpack_Pipeline": "Unpack Pipeline",
+    "UmeAiRT_Pack_Bundle": "Pack Models Bundle",
     "UmeAiRT_Unpack_SettingsBundle": "Unpack Settings Bundle",
     "UmeAiRT_Unpack_PromptsBundle": "Unpack Prompts Bundle",
     "UmeAiRT_ControlNetImageApply_Simple": "ControlNet Apply (Simple)",
