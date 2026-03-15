@@ -1,0 +1,213 @@
+import torch
+import folder_paths
+import nodes as comfy_nodes
+import comfy.sd
+import comfy.utils
+from .common import GenerationContext, resize_tensor, apply_outpaint_padding, log_node
+from .logger import logger
+from .logic_nodes import UmeAiRT_UltimateUpscale_Base
+from .optimization_utils import SamplerContext
+
+try:
+    from .facedetailer_core import detector, logic as fd_logic
+except ImportError:
+    pass
+
+# --- Processor Blocks ---
+
+class UmeAiRT_BlockSampler:
+    """Central hub: receives models + settings + prompts as side-inputs,
+    creates the GenerationContext pipeline, samples, and stores the image inside.
+    """
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "model_bundle": ("UME_BUNDLE", {"tooltip": "Model bundle from a Loader node."}),
+                "settings": ("UME_SETTINGS", {"tooltip": "Settings from Generation Settings node."}),
+                "positive": ("POSITIVE", {"forceInput": True}),
+            },
+            "optional": {
+                "negative": ("NEGATIVE", {"forceInput": True}),
+                "loras": ("UME_LORA_STACK",),
+                "image": ("UME_IMAGE",),
+            }
+        }
+    RETURN_TYPES = ("UME_PIPELINE",)
+    RETURN_NAMES = ("generation",)
+    FUNCTION = "process"
+    CATEGORY = "UmeAiRT/Block/Sampler"
+
+    def __init__(self):
+        self.lora_loader = comfy_nodes.LoraLoader()
+        self.cnet_loader = comfy_nodes.ControlNetLoader()
+        self.cnet_apply = comfy_nodes.ControlNetApplyAdvanced()
+        self._last_pos_text = None
+        self._last_neg_text = None
+        self._last_clip = None
+        self._cached_positive = None
+        self._cached_negative = None
+
+    def process(self, model_bundle, settings, positive=None, negative=None, loras=None, image=None):
+        # 1. Unpack model_bundle and create GenerationContext
+        model = model_bundle["model"]
+        clip = model_bundle["clip"]
+        vae = model_bundle["vae"]
+
+        ctx = GenerationContext()
+        ctx.model = model
+        ctx.clip = clip
+        ctx.vae = vae
+        ctx.model_name = model_bundle.get("model_name", "")
+
+        # 2. Apply settings
+        ctx.width = settings.get("width", 1024)
+        ctx.height = settings.get("height", 1024)
+        ctx.steps = settings.get("steps", 20)
+        ctx.cfg = settings.get("cfg", 8.0)
+        ctx.sampler_name = settings.get("sampler_name", "euler")
+        ctx.scheduler = settings.get("scheduler", "normal")
+        ctx.seed = settings.get("seed", 0)
+
+        controlnets = []
+        if image and isinstance(image, dict):
+            controlnets = image.get("controlnets", [])
+
+        # 3. Apply LoRAs
+        if loras:
+            if not model or not clip: raise ValueError("Block Sampler: No base Model/CLIP for LoRAs.")
+            loaded_loras_meta = []
+            for lora_def in loras:
+                name, str_model, str_clip = lora_def
+                if name != "None":
+                    try:
+                         model, clip = self.lora_loader.load_lora(model, clip, name, str_model, str_clip)
+                         loaded_loras_meta.append({"name": name, "strength": str_model})
+                    except Exception as e:
+                        log_node(f"Block Sampler LoRA Error ({name}): {e}", color="RED")
+            ctx.model = model
+            ctx.clip = clip
+            ctx.loras = loaded_loras_meta
+
+        if not model or not vae or not clip: raise ValueError("Block Sampler: Missing Model/VAE/CLIP.")
+
+        width, height = ctx.width, ctx.height
+        steps, cfg = ctx.steps, ctx.cfg
+        sampler_name, scheduler = ctx.sampler_name, ctx.scheduler
+        seed = ctx.seed
+
+        denoise = image.get("denoise", 1.0) if image else ctx.denoise
+        ctx.denoise = denoise
+
+        # 4. Handle Prompts
+        pos_text = positive if positive is not None else ""
+        neg_text = negative if negative is not None else ""
+        ctx.positive_prompt = pos_text
+        ctx.negative_prompt = neg_text
+
+        latent_image = None
+        mode_str = "txt2img"
+        raw_image, source_mask = None, None
+
+        if image:
+             raw_image = image.get("image")
+             source_mask = image.get("mask")
+             mode_str = image.get("mode", "img2img")
+             auto_resize = image.get("auto_resize", False)
+
+             # Auto-resize source image to settings dimensions
+             if auto_resize and raw_image is not None:
+                 raw_image = resize_tensor(raw_image, height, width, interp_mode="bilinear")
+                 if source_mask is not None:
+                     source_mask = resize_tensor(source_mask, height, width, interp_mode="nearest", is_mask=True)
+                 log_node(f"Block Sampler: Auto-resized source to {width}x{height}", color="YELLOW")
+
+             ctx.source_image = raw_image
+             ctx.source_mask = source_mask
+
+             if mode_str in ["inpaint", "outpaint"] and source_mask is not None:
+                 latent_image = comfy_nodes.VAEEncode().encode(vae, raw_image)[0]
+                 latent_image["noise_mask"] = source_mask
+             elif denoise < 1.0:
+                 latent_image = comfy_nodes.VAEEncode().encode(vae, raw_image)[0]
+
+        if latent_image is None and ctx.latent is not None:
+             latent_image = ctx.latent
+
+        # 5. Empty Latent — detect channels from model (SD=4, FLUX=16)
+        if latent_image is None:
+             latent_channels = 4
+             try:
+                 latent_channels = model.model.latent_format.latent_channels
+             except Exception:
+                 pass
+             l = torch.zeros([1, latent_channels, height // 8, width // 8], device="cpu")
+             latent_image = {"samples": l}
+             denoise = 1.0
+
+        # 6. Encode prompts
+        if self._last_pos_text == pos_text and self._last_neg_text == neg_text and self._last_clip is clip:
+             positive_cond = self._cached_positive
+             negative_cond = self._cached_negative
+             log_node("Block Sampler: Using cached Prompts (Fast Start)", color="GREEN")
+        else:
+             log_node("Block Sampler: Encoding Prompts...")
+             tokens = clip.tokenize(pos_text)
+             cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+             positive_cond = [[cond, {"pooled_output": pooled}]]
+
+             tokens = clip.tokenize(neg_text)
+             cond, pooled = clip.encode_from_tokens(tokens, return_pooled=True)
+             negative_cond = [[cond, {"pooled_output": pooled}]]
+
+             self._last_pos_text = pos_text
+             self._last_neg_text = neg_text
+             self._last_clip = clip
+             self._cached_positive = positive_cond
+             self._cached_negative = negative_cond
+
+        if controlnets:
+            for cnet_def in controlnets:
+                c_name, c_image, c_str, c_start, c_end = cnet_def
+                if c_name != "None" and c_image is not None:
+                    try:
+                        c_model = self.cnet_loader.load_controlnet(c_name)[0]
+                        positive_cond, negative_cond = self.cnet_apply.apply_controlnet(positive_cond, negative_cond, c_model, c_image, c_str, c_start, c_end)
+                    except Exception as e: log_node(f"Block Sampler ControlNet Error: {e}", color="RED")
+
+        log_node(f"Block Sampler: {mode_str} | {width}x{height} | Steps: {steps} | CFG: {cfg}")
+
+        from .optimization_utils import warmup_vae
+        warmup_vae(vae, latent_image)
+
+        # 7. Sample
+        try:
+             with SamplerContext():
+                 result_latent = comfy_nodes.KSampler().sample(model, seed, steps, cfg, sampler_name, scheduler, positive_cond, negative_cond, latent_image, denoise)[0]
+        except Exception as e:
+             raise RuntimeError(f"Sampling Failed: {e}")
+
+        # 8. Decode & store image in pipeline
+        log_node("Block Sampler: Decoding VAE")
+        image_out = comfy_nodes.VAEDecode().decode(vae, result_latent)[0]
+
+        if mode_str == "inpaint" and raw_image is not None and source_mask is not None:
+             try:
+                 B, H, W, C = image_out.shape
+                 source_resized = resize_tensor(raw_image, H, W, interp_mode="bilinear")
+                 mask_resized = resize_tensor(source_mask, H, W, interp_mode="bilinear", is_mask=True)
+                 m = mask_resized
+                 if len(m.shape) == 2: m = m.unsqueeze(0).unsqueeze(-1)
+                 elif len(m.shape) == 3: m = m.unsqueeze(-1)
+                 if m.shape[0] < B: m = m.repeat(B, 1, 1, 1)
+                 if source_resized.shape[0] < B: source_resized = source_resized.repeat(B, 1, 1, 1)
+                 m = torch.clamp(m, 0.0, 1.0)
+                 image_out = source_resized * (1.0 - m) + image_out * m
+                 log_node("Block Inpaint: Auto-Composited.", color="GREEN")
+             except Exception as e:
+                 log_node(f"Block Inpaint Composite Failed: {e}", color="RED")
+
+        ctx.image = image_out
+        ctx.latent = result_latent
+        return (ctx,)
+
