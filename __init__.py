@@ -136,6 +136,18 @@ NODE_CLASS_MAPPINGS = {
     "UmeAiRT_Bundle_Downloader": UmeAiRT_Bundle_Downloader,
     "UmeAiRT_Log_Viewer": UmeAiRT_Log_Viewer,
     "UmeAiRT_HealthCheck": UmeAiRT_HealthCheck,
+
+    # Legacy aliases (backward compatibility for existing workflows)
+    "UmeAiRT_WirelessUltimateUpscale": UmeAiRT_PipelineUltimateUpscale,
+    "UmeAiRT_WirelessUltimateUpscale_Advanced": UmeAiRT_PipelineUltimateUpscale_Advanced,
+    "UmeAiRT_WirelessSeedVR2Upscale": UmeAiRT_PipelineSeedVR2Upscale,
+    "UmeAiRT_WirelessSeedVR2Upscale_Advanced": UmeAiRT_PipelineSeedVR2Upscale_Advanced,
+    "UmeAiRT_WirelessFaceDetailer_Advanced": UmeAiRT_PipelineFaceDetailer_Advanced,
+    "UmeAiRT_WirelessFaceDetailer_Simple": UmeAiRT_PipelineFaceDetailer,
+    "UmeAiRT_WirelessImageLoader": UmeAiRT_PipelineImageLoader,
+    "UmeAiRT_WirelessImageProcess": UmeAiRT_PipelineImageProcess,
+    "UmeAiRT_WirelessInpaintComposite": UmeAiRT_PipelineInpaintComposite,
+    "UmeAiRT_WirelessImageSaver": UmeAiRT_PipelineImageSaver,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
