@@ -1527,3 +1527,41 @@ class UmeAiRT_BundleLoader:
 
         log_node(f"Bundle Loader: ✅ {category}/{version} ready.", color="GREEN")
         return ({"model": model, "clip": clip, "vae": vae, "model_name": model_name},)
+
+
+class UmeAiRT_Positive_Input:
+    """Multiline text editor for the positive prompt. Outputs a STRING."""
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "positive": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "Positive prompt."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("positive",)
+    FUNCTION = "pass_through"
+    CATEGORY = "UmeAiRT/Prompts"
+
+    def pass_through(self, positive):
+        return (positive,)
+
+
+class UmeAiRT_Negative_Input:
+    """Multiline text editor for the negative prompt. Outputs a STRING."""
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "negative": ("STRING", {"default": "text, watermark", "multiline": True, "dynamicPrompts": True, "tooltip": "Negative prompt."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("negative",)
+    FUNCTION = "pass_through"
+    CATEGORY = "UmeAiRT/Prompts"
+
+    def pass_through(self, negative):
+        return (negative,)

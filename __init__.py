@@ -49,7 +49,8 @@ from .modules.block_nodes import (
     UmeAiRT_FilesSettings_ZIMG,
     UmeAiRT_BlockImageLoader, UmeAiRT_BlockImageLoader_Advanced, UmeAiRT_BlockImageProcess,
     UmeAiRT_BlockSampler, UmeAiRT_BlockUltimateSDUpscale, UmeAiRT_BlockFaceDetailer,
-    UmeAiRT_BundleLoader
+    UmeAiRT_BundleLoader,
+    UmeAiRT_Positive_Input, UmeAiRT_Negative_Input
 )
 from .modules.utils_nodes import (
     UmeAiRT_Label,
@@ -92,6 +93,10 @@ NODE_CLASS_MAPPINGS = {
     "UmeAiRT_ControlNetImageApply_Advanced": UmeAiRT_ControlNetImageApply_Advanced,
     "UmeAiRT_ControlNetImageApply_Simple": UmeAiRT_ControlNetImageApply_Simple,
     "UmeAiRT_ControlNetImageProcess": UmeAiRT_ControlNetImageProcess,
+
+    # Prompt Editors
+    "UmeAiRT_Positive_Input": UmeAiRT_Positive_Input,
+    "UmeAiRT_Negative_Input": UmeAiRT_Negative_Input,
 
     # Sampler & Post-Process (Pipeline)
     "UmeAiRT_BlockSampler": UmeAiRT_BlockSampler,
@@ -155,6 +160,10 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UmeAiRT_ControlNetImageApply_Simple": "ControlNet Apply (Simple)",
     "UmeAiRT_ControlNetImageApply_Advanced": "ControlNet Apply (Advanced)",
     "UmeAiRT_ControlNetImageProcess": "ControlNet Process (Unified)",
+
+    # Prompt Editors
+    "UmeAiRT_Positive_Input": "Positive Prompt Input",
+    "UmeAiRT_Negative_Input": "Negative Prompt Input",
 
     # Sampler & Post-Process
     "UmeAiRT_BlockSampler": "Block Sampler",
