@@ -169,22 +169,22 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "UmeAiRT_BlockSampler": "KSampler",
     "UmeAiRT_BlockUltimateSDUpscale": "UltimateSD Upscale",
     "UmeAiRT_BlockFaceDetailer": "Face Detailer",
-    "UmeAiRT_PipelineUltimateUpscale": "UltimateSD Upscale (Pipeline)",
-    "UmeAiRT_PipelineUltimateUpscale_Advanced": "UltimateSD Upscale (Pipeline Advanced)",
-    "UmeAiRT_PipelineSeedVR2Upscale": "SeedVR2 Upscale (Pipeline)",
-    "UmeAiRT_PipelineSeedVR2Upscale_Advanced": "SeedVR2 Upscale (Pipeline Advanced)",
-    "UmeAiRT_PipelineFaceDetailer_Advanced": "FaceDetailer (Pipeline Advanced)",
-    "UmeAiRT_PipelineFaceDetailer": "FaceDetailer (Pipeline)",
+    "UmeAiRT_PipelineUltimateUpscale": "UltimateSD Upscale",
+    "UmeAiRT_PipelineUltimateUpscale_Advanced": "UltimateSD Upscale (Advanced)",
+    "UmeAiRT_PipelineSeedVR2Upscale": "SeedVR2 Upscale",
+    "UmeAiRT_PipelineSeedVR2Upscale_Advanced": "SeedVR2 Upscale (Advanced)",
+    "UmeAiRT_PipelineFaceDetailer_Advanced": "FaceDetailer (Advanced)",
+    "UmeAiRT_PipelineFaceDetailer": "FaceDetailer",
     "UmeAiRT_Detailer_Daemon_Simple": "Detailer Daemon",
     "UmeAiRT_Detailer_Daemon_Advanced": "Detailer Daemon (Advanced)",
     "UmeAiRT_BboxDetectorLoader": "BBOX Detector Loader",
 
-    # Image (Pipeline)
-    "UmeAiRT_PipelineImageLoader": "Image Loader (Pipeline)",
+    # Image
+    "UmeAiRT_PipelineImageLoader": "Image Loader",
     "UmeAiRT_SourceImage_Output": "Source Image Output",
-    "UmeAiRT_PipelineImageProcess": "Image Process (Pipeline)",
-    "UmeAiRT_PipelineInpaintComposite": "Inpaint Composite (Pipeline)",
-    "UmeAiRT_PipelineImageSaver": "Image Saver (Pipeline)",
+    "UmeAiRT_PipelineImageProcess": "Image Process",
+    "UmeAiRT_PipelineInpaintComposite": "Inpaint Composite",
+    "UmeAiRT_PipelineImageSaver": "Image Saver",
 
     # Pack/Unpack
     "UmeAiRT_Pack_Bundle": "Pack Models Bundle",
