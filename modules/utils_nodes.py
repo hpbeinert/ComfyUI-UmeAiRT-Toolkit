@@ -3,15 +3,12 @@ import os
 import json
 import folder_paths
 import nodes as comfy_nodes
-from .common import UME_SHARED_STATE, log_node
+from .common import log_node
 from .logger import logger
 
-class UmeAiRT_Label:
-    """A purely visual node used for organizing and annotating ComfyUI workflows.
 
-    It does not process any actual data but provides a customizable text label 
-    that can be placed anywhere on the canvas.
-    """
+class UmeAiRT_Label:
+    """A purely visual node used for organizing and annotating ComfyUI workflows."""
     @classmethod
     def INPUT_TYPES(s):
         return {
@@ -26,60 +23,10 @@ class UmeAiRT_Label:
     RETURN_TYPES = ()
     FUNCTION = "do_label"
     CATEGORY = "UmeAiRT/Utils"
-    OUTPUT_NODE = True 
-
-    def do_label(self, title, text, color, font_size):
-        """Executes the visual node.
-
-        Args:
-            title (str): The title text of the label.
-            text (str): The main descriptive text.
-            color (str): The chosen color theme constraint.
-            font_size (int): The relative font size for display.
-
-        Returns:
-            dict: An empty dictionary as this is purely a frontend visual element.
-        """
-        # Does nothing functionally, just frontend visual
-        return {}
-
-class UmeAiRT_Wireless_Debug:
-    """A utility node for developers to inspect the current Wireless Shared State.
-
-    When triggered, it parses the `UME_SHARED_STATE` dictionary and prints 
-    its keys and abstract values (like tensor shapes) to the console log.
-    """
-    @classmethod
-    def INPUT_TYPES(s):
-        return {
-             "required": {
-                 "trigger": ("ANY", {"default": None, "forceInput": True}),
-             }
-        }
-    RETURN_TYPES = ()
-    FUNCTION = "debug_state"
-    CATEGORY = "UmeAiRT/Utils"
     OUTPUT_NODE = True
 
-    def debug_state(self, trigger=None):
-        """Reads and logs the global state out to the standardized logger.
-
-        Args:
-            trigger (Any, optional): Anything connected to forcefully trigger node execution.
-
-        Returns:
-            dict: Empty dictionary.
-        """
-        log_node("--- Wireless State Debug ---", color="CYAN")
-        for k, v in UME_SHARED_STATE.items():
-            val_str = str(v)
-            if isinstance(v, torch.Tensor):
-                val_str = f"Tensor {v.shape} {v.device}"
-            elif isinstance(v, dict):
-                val_str = f"Dict keys: {list(v.keys())}"
-            
-            log_node(f"{k}: {val_str}", color="WHITE")
-        log_node("----------------------------", color="CYAN")
+    def do_label(self, title, text, color, font_size):
+        """Does nothing functionally — purely a frontend visual label."""
         return {}
 
 class UmeAiRT_Bundle_Downloader:
