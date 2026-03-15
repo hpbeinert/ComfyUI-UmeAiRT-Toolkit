@@ -30,44 +30,26 @@ class UmeAiRT_Label:
         return {}
 
 class UmeAiRT_Bundle_Downloader:
-    """A Node designed to download specific model bundles or workflows.
+    """Standalone model downloader utility node.
 
-    It reads from a `bundles.json` manifest located at the root of the node directory 
-    to dynamically populate its ComfyUI dropdowns.
+    Downloads model bundles from umeairt_bundles.json to the correct ComfyUI
+    model folders WITHOUT loading them into memory. Ideal for:
+    - Pre-downloading models on RunPod/cloud before running workflows
+    - Batch-downloading entire model families (FLUX, Z-IMG)
+    - Ensuring all required files are present before generation
+
+    Uses aria2c for multi-connection downloads when available, with urllib fallback.
+    Supports HuggingFace token for authenticated/faster downloads.
     """
-    def __init__(self):
-        self.bundles_data = {}
-        self.json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "umeairt_bundles.json")
-        if os.path.exists(self.json_path):
-            try:
-                with open(self.json_path, 'r', encoding='utf-8') as f:
-                    self.bundles_data = json.load(f)
-            except Exception as e:
-                log_node(f"Error loading bundles.json: {e}", color="RED")
-    
-    _bundles_cache = None
 
     @classmethod
     def INPUT_TYPES(s):
-        # Use class-level cache to avoid re-reading bundles.json on every UI refresh
-        if UmeAiRT_Bundle_Downloader._bundles_cache is None:
-            json_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "umeairt_bundles.json")
-            if os.path.exists(json_path):
-                try:
-                    with open(json_path, 'r', encoding='utf-8') as f:
-                        UmeAiRT_Bundle_Downloader._bundles_cache = json.load(f)
-                except Exception:
-                    UmeAiRT_Bundle_Downloader._bundles_cache = {}
-            else:
-                UmeAiRT_Bundle_Downloader._bundles_cache = {}
-        data = UmeAiRT_Bundle_Downloader._bundles_cache
-        
-        categories = list(data.keys()) if data else ["Error: No Bundles"]
+        from .block_loaders import _get_bundle_dropdowns
+        categories, versions_list = _get_bundle_dropdowns()
         return {
             "required": {
-                "category": (categories,),
-                "bundle_name": (["Select Category First"],), 
-                "download_path": ("STRING", {"default": "downloads"}),
+                "category": (categories, {"tooltip": "Model family to download (e.g. FLUX, Z-IMAGE_TURBO)."}),
+                "version": (versions_list, {"tooltip": "Quantization/precision variant (e.g. fp16, GGUF_Q4)."}),
             }
         }
 
@@ -77,21 +59,25 @@ class UmeAiRT_Bundle_Downloader:
     CATEGORY = "UmeAiRT/Utils"
     OUTPUT_NODE = True
 
-    def download(self, category, bundle_name, download_path):
-        """Mocks the download action and returns a status string.
+    def download(self, category, version):
+        """Download all files for the selected bundle without loading into memory."""
+        from .block_loaders import _download_bundle_files
 
-        Args:
-            category (str): The selected category from the dropdown.
-            bundle_name (str): The selected bundle item to download.
-            download_path (str): The target destination folder.
+        try:
+            _, _, downloaded, skipped, errors = _download_bundle_files(category, version)
+        except ValueError as e:
+            return (f"❌ {e}",)
 
-        Returns:
-            tuple: A tuple containing the execution status string.
-        """
-        log_node(f"Bundle Download requested: {category}/{bundle_name}", color="YELLOW")
-        # Implementation of actual download logic would go here
-        # For refactor, we keep it safe.
-        return (f"Downloaded {bundle_name}",)
+        parts = [f"📥 {category}/{version}:"]
+        if downloaded:
+            parts.append(f"{downloaded} downloaded")
+        if skipped:
+            parts.append(f"{skipped} already present")
+        if errors:
+            parts.append(f"{len(errors)} failed ({', '.join(errors)})")
+        status = " | ".join(parts)
+        log_node(status, color="GREEN" if not errors else "RED")
+        return (status,)
 
 
 class UmeAiRT_Unpack_Settings:

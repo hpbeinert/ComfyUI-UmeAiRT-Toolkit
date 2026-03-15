@@ -720,32 +720,88 @@ def _get_hf_token():
     return ""
 
 
+def _get_bundle_dropdowns():
+    """Return (categories, versions) lists from umeairt_bundles.json for dropdown population."""
+    data = _load_bundles_json()
+    categories = [k for k in data.keys() if not k.startswith("_")] if data else ["No Bundles Found"]
+    all_versions = set()
+    for cat_key in categories:
+        cat_data = data.get(cat_key, {})
+        for ver_key in cat_data.keys():
+            if ver_key != "_meta":
+                all_versions.add(ver_key)
+    versions_list = sorted(list(all_versions)) if all_versions else ["Select Category First"]
+    return categories, versions_list
+
+
+def _download_bundle_files(category, version):
+    """Download all files for a bundle, skipping already-present ones.
+
+    Returns:
+        tuple: (resolved_files dict, meta dict, downloaded count, skipped count, errors list)
+    """
+    hf_token = _get_hf_token()
+    if not hf_token:
+        log_node(
+            "💡 No HF token found. To speed up downloads, create a token at "
+            "https://huggingface.co/settings/tokens and set HF_TOKEN in your environment variables.",
+            color="YELLOW"
+        )
+
+    data = _load_bundles_json()
+    if category not in data:
+        raise ValueError(f"Category '{category}' not found in bundles manifest.")
+    cat_data = data[category]
+    meta = cat_data.get("_meta", {})
+    base_url = meta.get("base_url", "")
+
+    if version not in cat_data:
+        raise ValueError(f"Version '{version}' not found for {category}.")
+    bundle_def = cat_data[version]
+    files = bundle_def.get("files", [])
+    min_vram = bundle_def.get("min_vram", 0)
+    log_node(f"📥 {category} / {version} ({len(files)} files, min VRAM: {min_vram}GB)")
+
+    resolved_files = {}
+    downloaded = 0
+    skipped = 0
+    errors = []
+
+    for file_entry in files:
+        pt = file_entry["path_type"]
+        filename = file_entry["filename"]
+        url_path = file_entry["url"]
+        folder_types = _PATH_TYPE_TO_FOLDERS.get(pt, [pt])
+        local_path = _find_file_in_folders(filename, folder_types)
+        if local_path:
+            log_node(f"  ✅ '{filename}' already present — skipping.", color="GREEN")
+            skipped += 1
+        else:
+            try:
+                full_url = base_url + url_path
+                dest = _get_download_dest(filename, folder_types[0])
+                _download_file(full_url, dest, hf_token=hf_token)
+                downloaded += 1
+            except Exception as e:
+                log_node(f"  ❌ Failed to download '{filename}': {e}", color="RED")
+                errors.append(filename)
+        if pt not in resolved_files:
+            resolved_files[pt] = []
+        resolved_files[pt].append(filename)
+
+    return resolved_files, meta, downloaded, skipped, errors
+
+
 class UmeAiRT_BundleLoader:
     """Bundle Auto-Loader: select a model + version, auto-download missing files, and load them.
 
-    Combines the Bundle Model Downloader and Model Loader (Z-IMG/FLUX) into one node.
+    Combines downloading and loading into one node.
     Reads from umeairt_bundles.json to populate dropdowns and determine loading strategy.
     """
 
-    _bundles_cache = None
-
     @classmethod
     def INPUT_TYPES(s):
-        if UmeAiRT_BundleLoader._bundles_cache is None:
-            UmeAiRT_BundleLoader._bundles_cache = _load_bundles_json()
-        data = UmeAiRT_BundleLoader._bundles_cache
-
-        categories = [k for k in data.keys() if not k.startswith("_")] if data else ["No Bundles Found"]
-
-        # Collect all possible versions across all categories for the initial dropdown
-        all_versions = set()
-        for cat_key in categories:
-            cat_data = data.get(cat_key, {})
-            for ver_key in cat_data.keys():
-                if ver_key != "_meta":
-                    all_versions.add(ver_key)
-        versions_list = sorted(list(all_versions)) if all_versions else ["Select Category First"]
-
+        categories, versions_list = _get_bundle_dropdowns()
         return {
             "required": {
                 "category": (categories, {"tooltip": "Select model family (e.g. FLUX, Z-IMAGE_TURBO)."}),
@@ -761,39 +817,11 @@ class UmeAiRT_BundleLoader:
 
     def load_bundle(self, category, version):
         """Download missing files and load the selected model bundle."""
-        hf_token = _get_hf_token()
-        if not hf_token:
-            log_node("💡 No HF token found. To speed up downloads, create a token at https://huggingface.co/settings/tokens and set HF_TOKEN in your environment variables.", color="YELLOW")
-        data = _load_bundles_json()
-        if category not in data:
-            raise ValueError(f"Bundle Loader: Category '{category}' not found.")
-        cat_data = data[category]
-        meta = cat_data.get("_meta", {})
-        base_url = meta.get("base_url", "")
+        resolved_files, meta, downloaded, skipped, errors = _download_bundle_files(category, version)
+        if errors:
+            raise RuntimeError(f"Bundle Loader: {len(errors)} file(s) failed to download: {', '.join(errors)}")
         loader_type = meta.get("loader_type", "zimg")
         clip_type_str = meta.get("clip_type", "lumina2")
-        if version not in cat_data:
-            raise ValueError(f"Bundle Loader: Version '{version}' not found.")
-        bundle_def = cat_data[version]
-        files = bundle_def.get("files", [])
-        min_vram = bundle_def.get("min_vram", 0)
-        log_node(f"Bundle Loader: {category} / {version} (min VRAM: {min_vram}GB)")
-
-        resolved_files = {}
-        for file_entry in files:
-            pt = file_entry["path_type"]
-            filename = file_entry["filename"]
-            url_path = file_entry["url"]
-            folder_types = _PATH_TYPE_TO_FOLDERS.get(pt, [pt])
-            local_path = _find_file_in_folders(filename, folder_types)
-            if local_path:
-                log_node(f"  ✅ '{filename}' found.", color="GREEN")
-            else:
-                full_url = base_url + url_path
-                dest = _get_download_dest(filename, folder_types[0])
-                _download_file(full_url, dest, hf_token=hf_token)
-            if pt not in resolved_files: resolved_files[pt] = []
-            resolved_files[pt].append(filename)
 
         model, clip, vae = None, None, None
         model_name = ""
